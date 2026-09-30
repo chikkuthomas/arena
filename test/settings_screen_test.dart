@@ -17,8 +17,18 @@ void main() {
     expect(find.text('Settings'), findsOneWidget);
     expect(find.text('Rate Arena'), findsOneWidget);
     expect(find.text('Share Arena'), findsOneWidget);
-    expect(find.text('Replay walkthrough'), findsOneWidget);
-    expect(find.text('Terms of Service'), findsOneWidget);
-    expect(find.text('Privacy Policy'), findsOneWidget);
+
+    // The list is taller than the test viewport, and ListView only builds the
+    // rows that are on screen — so scroll down to reach the rest.
+    for (final label in [
+      'Blocked users',
+      'Replay walkthrough',
+      'Terms of Service',
+      'Privacy Policy',
+    ]) {
+      await tester.scrollUntilVisible(find.text(label), 120,
+          scrollable: find.byType(Scrollable).first);
+      expect(find.text(label), findsOneWidget);
+    }
   });
 }

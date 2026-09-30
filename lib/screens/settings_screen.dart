@@ -4,6 +4,7 @@ import '../services/onboarding_service.dart';
 import '../services/review_service.dart';
 import '../services/share_service.dart';
 import '../theme.dart';
+import 'blocked_users_screen.dart';
 import 'legal_screen.dart';
 import 'onboarding_screen.dart';
 
@@ -76,6 +77,17 @@ class SettingsScreen extends StatelessWidget {
             title: 'Share Arena',
             subtitle: 'Invite friends to join the debate',
             onTap: () => _share(context),
+          ),
+          const Divider(height: 24, color: AppColors.border),
+          const _SectionHeader('Safety'),
+          _SettingsTile(
+            icon: Icons.block,
+            iconColour: AppColors.againstSide,
+            title: 'Blocked users',
+            subtitle: 'See and undo who you have blocked',
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const BlockedUsersScreen()),
+            ),
           ),
           const Divider(height: 24, color: AppColors.border),
           const _SectionHeader('Help'),

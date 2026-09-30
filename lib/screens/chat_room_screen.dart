@@ -302,7 +302,11 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
   }
 
   Future<void> _blockUser(Message m) async {
-    final updated = await _moderation.blockUser(m.senderId);
+    final updated = await _moderation.blockUser(
+      m.senderId,
+      name: m.senderName,
+      avatar: m.senderAvatar,
+    );
     if (mounted) {
       setState(() => _blocked = updated);
       _toast('${m.senderName} blocked.');
