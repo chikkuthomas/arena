@@ -9,6 +9,8 @@ import '../models/room.dart';
 import '../services/auth_service.dart';
 import '../services/daily_override_service.dart';
 import '../services/daily_topic_service.dart';
+import '../services/onboarding_service.dart';
+import '../services/review_service.dart';
 import '../services/room_service.dart';
 import '../theme.dart';
 import '../widgets/join_stance_dialog.dart';
@@ -17,8 +19,10 @@ import '../widgets/user_avatar.dart';
 import 'chat_room_screen.dart';
 import 'create_room_screen.dart';
 import 'login_screen.dart';
+import 'onboarding_screen.dart';
 import 'profile_screen.dart';
 import 'room_discovery_screen.dart';
+import 'settings_screen.dart';
 
 /// The home screen: today's featured topic, a search box, category filters, and
 /// the live list of every debate room.
@@ -60,6 +64,31 @@ class _RoomsListScreenState extends State<RoomsListScreen>
     // Check whether they've verified their email since the app was opened.
     _refreshVerification();
     _loadTodayOverride();
+    _maybeShowOnboarding();
+  }
+
+  /// First launch on this phone? Show the walkthrough once. Runs after the
+  /// first frame so the rooms list is already built underneath it, and is
+  /// wrapped so a storage hiccup can never block the app.
+  Future<void> _maybeShowOnboarding() async {
+    try {
+      if (!await OnboardingService.shouldOffer()) return;
+      if (!mounted) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const OnboardingScreen()),
+        );
+      });
+    } catch (_) {/* never block the rooms list */}
+  }
+
+  /// Called when the user comes back from a debate room. Coming out of a room
+  /// is the natural moment to ask for a rating — they've just used the app for
+  /// real. [ReviewService] only ever asks once, and only after a few visits.
+  Future<void> _afterRoomVisit() async {
+    await ReviewService.recordEngagement();
+    await ReviewService.maybePrompt();
   }
 
   /// If an admin has set today's topic, show that on the featured card.
@@ -239,11 +268,14 @@ class _RoomsListScreenState extends State<RoomsListScreen>
         await _rooms.recordJoin(uid, room, stance: stance);
       } catch (_) {/* non-fatal */}
       if (mounted) {
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => ChatRoomScreen(room: room, initialStance: stance!),
-          ),
-        );
+        Navigator.of(context)
+            .push(
+              MaterialPageRoute(
+                builder: (_) =>
+                    ChatRoomScreen(room: room, initialStance: stance!),
+              ),
+            )
+            .then((_) => _afterRoomVisit());
       }
     } catch (_) {
       if (mounted) {
@@ -296,6 +328,10 @@ class _RoomsListScreenState extends State<RoomsListScreen>
                     .push(MaterialPageRoute(
                         builder: (_) => const ProfileScreen()))
                     .then((_) => setState(() {})); // refresh the avatar icon
+              } else if (value == 'settings') {
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                );
               } else if (value == 'password') {
                 _showChangePassword();
               } else if (value == 'logout') {
@@ -305,6 +341,8 @@ class _RoomsListScreenState extends State<RoomsListScreen>
             itemBuilder: (ctx) => [
               const PopupMenuItem(
                   value: 'profile', child: Text('Profile & avatar')),
+              const PopupMenuItem(
+                  value: 'settings', child: Text('Settings')),
               // Only email/password accounts have a password to change.
               if (_auth.hasPasswordProvider)
                 const PopupMenuItem(
@@ -440,11 +478,13 @@ class _RoomsListScreenState extends State<RoomsListScreen>
       await _rooms.recordJoin(uid, room, stance: stance);
     } catch (_) {/* non-fatal */}
     if (!mounted) return;
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => ChatRoomScreen(room: room, initialStance: stance!),
-      ),
-    );
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            builder: (_) => ChatRoomScreen(room: room, initialStance: stance!),
+          ),
+        )
+        .then((_) => _afterRoomVisit());
   }
 
   /// Long-press menu on a room card. In "My Rooms" the creator can remove the

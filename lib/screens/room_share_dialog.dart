@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/room.dart';
+import '../services/share_service.dart';
 import '../theme.dart';
 
 class RoomShareDialog extends StatefulWidget {
@@ -130,17 +131,17 @@ class _RoomShareDialogState extends State<RoomShareDialog> {
                 _shareButton(
                   icon: Icons.message,
                   label: 'WhatsApp',
-                  onTap: () => _shareVia('whatsapp'),
+                  onTap: _shareVia,
                 ),
                 _shareButton(
                   icon: Icons.email,
                   label: 'Email',
-                  onTap: () => _shareVia('email'),
+                  onTap: _shareVia,
                 ),
                 _shareButton(
                   icon: Icons.share,
                   label: 'More',
-                  onTap: () => _shareVia('more'),
+                  onTap: _shareVia,
                 ),
               ],
             ),
@@ -227,16 +228,23 @@ class _RoomShareDialogState extends State<RoomShareDialog> {
     );
   }
 
-  void _shareVia(String platform) {
+  /// Opens the phone's share sheet so the invite can go to WhatsApp, email,
+  /// SMS or anything else installed. If the sheet can't be opened we fall back
+  /// to the old behaviour — copying the invite to the clipboard — so the
+  /// button always does something useful.
+  Future<void> _shareVia() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final ok = await ShareService.shareRoom(
+      roomName: widget.room.name,
+      roomId: widget.room.id,
+      link: _roomLink,
+    );
+    if (ok || !mounted) return;
     final message =
         'Join the debate! Room: ${widget.room.name}\n\n$_roomLink\n\nOr use Room ID: ${widget.room.id}';
-
-    // TODO: Implement actual sharing via platform
-    // For now, just copy to clipboard as fallback
-    _copyToClipboard(message);
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Share message copied for $platform')),
+    await Clipboard.setData(ClipboardData(text: message));
+    messenger.showSnackBar(
+      const SnackBar(content: Text('Invite copied to clipboard.')),
     );
   }
 }
