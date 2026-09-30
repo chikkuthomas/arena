@@ -2,6 +2,54 @@
 
 All notable changes to Arena will be documented in this file.
 
+## [1.13.0] - September 30, 2026
+
+Everything in this release comes from the Testers Community feedback report.
+That report found **no crashes and no bugs** — all four items were "opportunities
+for enhancement", so nothing existing was changed except the one unfinished
+share button noted below.
+
+### ✨ Added
+- **Settings screen** (account menu → **Settings**). A new home for the things
+  that aren't profile or account: rate, share, replay the walkthrough, and the
+  Terms / Privacy documents (previously only reachable from the login screen).
+- **"Rate Arena"** (`services/review_service.dart`, `in_app_review`). Two ways
+  in: the Settings button always opens the Play Store listing, and after the
+  user has come out of **5** debate rooms the app shows Google's native in-app
+  review sheet **once**, ever. The counter lives in `SharedPreferences`; Google
+  rate-limits the sheet itself, so there is no way for this to nag.
+- **"Share Arena"** (`services/share_service.dart`, `share_plus`). Opens the
+  phone's normal share sheet with an invite and the Play Store link, so users
+  can pull friends in over WhatsApp, SMS, email or anything else installed.
+- **New-user walkthrough** (`screens/onboarding_screen.dart`). Four slides —
+  what Arena is, picking a side, debating live, voting on who won — shown once
+  per phone on first launch, with **Skip** always visible. Replayable any time
+  from Settings. It is pushed from the rooms list after the first frame, so it
+  cannot interfere with the login / verify-email routing in `main.dart`.
+- **Real tests.** `test/` now covers the walkthrough slides, the Skip and
+  finish paths, the once-per-run guard, and the Settings rows (9 tests).
+
+### 🐛 Fixed
+- **Room sharing actually shares now.** The WhatsApp / Email / More buttons in
+  a room's share dialog had a `TODO` and only copied text to the clipboard.
+  They now open the real share sheet, and fall back to copying (with a clearer
+  message) if the sheet can't be opened. The Copy buttons are untouched.
+
+### 📄 Changed (store, not app)
+- **`playstore/STORE_LISTING.md` rewritten for ASO.** The full description grew
+  from ~1,900 to ~3,000 of the 4,000 allowed characters and now works the real
+  search terms (debate app, discussion, argue, live chat rooms, current events)
+  into natural sentences, plus a short-description rewrite and a maintenance
+  checklist. No keyword stuffing — that breaks Play policy.
+
+### ⚠️ Open question (not changed — needs your decision)
+- **Minimum age disagrees between places.** The in-app Terms of Service
+  (`screens/legal_screen.dart`) still says **13+**, while the sign-up checkbox
+  and the store listing say **18+**. The Terms, the listing and the Play
+  content-rating questionnaire should all say the same thing.
+- **Version bumped to `1.0.1+3`** (versionName 1.0.1, versionCode 3) so this
+  can be uploaded to Play. Bump `+N` again on every subsequent upload.
+
 ## [1.12.0] - July 15, 2026
 
 ### 🎨 Added (branding / Play Store prep)

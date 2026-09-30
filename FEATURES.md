@@ -234,6 +234,28 @@ Eight debate categories available:
 - Blocked users list
 - Notification settings
 
+## 🚀 Onboarding & App Settings
+
+*(Added in 1.13.0, from the Testers Community feedback report.)*
+
+### New-User Walkthrough
+- Four-slide intro shown **once per phone** on first launch
+- Covers: what Arena is, picking For/Against, debating live, voting on who won
+- **Skip** button on every slide, so nobody is ever trapped in it
+- Replayable any time from Settings → Replay walkthrough
+
+### Settings Screen
+Reached from the account menu (avatar, top right):
+- **Rate Arena** — opens the Play Store listing
+- **Share Arena** — opens the share sheet with an invite + store link
+- **Replay walkthrough** — shows the intro again
+- **Terms of Service** / **Privacy Policy** — previously login-screen only
+
+### Smart Rating Prompt
+- Google's native in-app review sheet appears **once**, after the user has come
+  out of 5 debate rooms — never on first launch, never repeatedly
+- Counted locally in `SharedPreferences`; no server involvement
+
 ## 🔜 Planned Features
 
 ### v1.1

@@ -32,15 +32,32 @@ Future<void> main() async {
   await Firebase.initializeApp();
   // Set up the daily "topic of the day" alerts. Best-effort — wrapped so it can
   // never block or crash startup.
-  await NotificationService.init();
-  await NotificationService.scheduleDailyTopics();
+  await _bestEffort(NotificationService.init());
+  await _bestEffort(NotificationService.scheduleDailyTopics());
   // Tapping a foreground notification we showed ourselves opens its room.
   NotificationService.onRoomTap = _openRoom;
   // Every device joins the app-wide broadcast topic so admin pushes reach all.
-  await RoomNotifyService.subscribeAll();
+  await _bestEffort(RoomNotifyService.subscribeAll());
   _setupPushNotifications();
   _wireUserReplyTopic();
   runApp(const ArenaApp());
+}
+
+/// Runs an optional start-up step, but never lets it hold the app hostage.
+///
+/// These calls reach into Google Play services. On a device where FCM
+/// registration fails, `subscribeToTopic` does not throw — it simply *waits*,
+/// which meant `runApp` was never reached and the user stared at a blank white
+/// screen forever. A try/catch cannot catch a call that never returns, so the
+/// cap here is what actually guarantees the UI appears. Losing a topic
+/// subscription is recoverable; never showing the app is not.
+Future<void> _bestEffort(Future<void> work,
+    {Duration limit = const Duration(seconds: 5)}) async {
+  try {
+    await work.timeout(limit);
+  } catch (_) {
+    // Timed out or failed — the app must start regardless.
+  }
 }
 
 /// Opens the room a tapped notification points at. Loads the room from
