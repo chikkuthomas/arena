@@ -506,6 +506,8 @@ exports.reportedMessages = onRequest(
     }
     try {
       const db = getFirestore();
+      // ?min=1 lists every reported message (the Admin app's "All" view).
+      const minReporters = Math.max(1, parseInt(req.query.min, 10) || 2);
       const snap = await db.collection("reports").get();
       const byMsg = {};
       snap.forEach((doc) => {
@@ -527,7 +529,7 @@ exports.reportedMessages = onRequest(
         if (d.reason) e.reasons.push(String(d.reason));
       });
       const reports = Object.values(byMsg)
-        .filter((e) => e.reporters.size >= 2)
+        .filter((e) => e.reporters.size >= minReporters)
         .map((e) => ({
           messageId: e.messageId,
           roomId: e.roomId,
@@ -701,6 +703,216 @@ exports.createVerifiedUser = onRequest(
     } catch (e) {
       console.error("createVerifiedUser failed:", e);
       return res.status(500).json({ error: e.message || String(e) });
+    }
+  }
+);
+
+// ---- Admin: manage users (call from Admin app) ---------------------------
+// One endpoint, several actions, all guarded by the shared secret:
+//
+//   POST https://asia-south1-arena-a049d.cloudfunctions.net/adminUsers
+//   Header:  x-arena-key: <BROADCAST_SECRET>
+//   Body:    { "action": "...", ... }
+//
+//   list                                  → every user (name, email, status)
+//   messages      { uid }                 → that user's recent messages
+//   notify        { uid, title, body }    → push to that one user's phones
+//   ban           { uid, reason? }        → block from logging in and posting
+//   unban         { uid }
+//   deleteMessage { roomId, messageId }   → remove a message (+ its reports)
+//   dismissReport { messageId }           → clear reports, keep the message
+//   rooms                                 → every room, latest activity first
+//   roomMessages  { roomId }              → a room's latest 300 messages
+//
+// A ban disables the login account, signs them out everywhere, and writes
+// banned/{uid}, which firestore.rules checks so they can't post even with a
+// still-valid session token.
+exports.adminUsers = onRequest(
+  { region: "asia-south1", secrets: [broadcastSecret] },
+  async (req, res) => {
+    if (req.method !== "POST") {
+      return res.status(405).json({ error: "Use POST" });
+    }
+    const expected = broadcastSecret.value();
+    const key = req.get("x-arena-key") || req.query.key;
+    if (!expected || key !== expected) {
+      return res.status(401).json({ error: "Unauthorized — wrong or missing key" });
+    }
+    const b = (req.body && typeof req.body === "object") ? req.body : {};
+    const action = String(b.action || "");
+    const uid = String(b.uid || "").trim();
+    const db = getFirestore();
+    const auth = getAuth();
+    const needUid = () => {
+      if (!uid) throw Object.assign(new Error("Provide a uid"), { status: 400 });
+    };
+
+    try {
+      switch (action) {
+        case "list": {
+          const banned = new Set(
+            (await db.collection("banned").get()).docs.map((d) => d.id));
+          const profiles = {};
+          (await db.collection("users").get()).docs.forEach((d) => {
+            profiles[d.id] = d.data() || {};
+          });
+          const users = [];
+          let pageToken;
+          do {
+            const page = await auth.listUsers(1000, pageToken);
+            for (const u of page.users) {
+              const p = profiles[u.uid] || {};
+              users.push({
+                uid: u.uid,
+                email: u.email || "",
+                name: p.displayName || u.displayName || "",
+                avatar: p.avatar || "",
+                provider: (u.providerData[0] || {}).providerId || "",
+                emailVerified: !!u.emailVerified,
+                disabled: !!u.disabled,
+                banned: banned.has(u.uid),
+                createdAt: Date.parse(u.metadata.creationTime) || 0,
+                lastLogin: Date.parse(u.metadata.lastSignInTime) || 0,
+              });
+            }
+            pageToken = page.pageToken;
+          } while (pageToken);
+          users.sort((a, c) => c.lastLogin - a.lastLogin);
+          return res.status(200).json({ ok: true, count: users.length, users });
+        }
+
+        case "messages": {
+          needUid();
+          const rooms = await db.collection("rooms").get();
+          const out = [];
+          for (const r of rooms.docs) {
+            const msgs = await r.ref.collection("messages")
+              .where("senderId", "==", uid).get();
+            msgs.forEach((m) => {
+              const d = m.data() || {};
+              out.push({
+                roomId: r.id,
+                roomName: (r.data() || {}).name || "",
+                messageId: m.id,
+                text: d.text || "",
+                stance: d.stance || "",
+                createdAt: d.createdAt ? d.createdAt.toMillis() : 0,
+              });
+            });
+          }
+          out.sort((a, c) => c.createdAt - a.createdAt);
+          return res.status(200).json({ ok: true, count: out.length, messages: out.slice(0, 100) });
+        }
+
+        case "notify": {
+          needUid();
+          const title = String(b.title || "Arena").slice(0, 80);
+          const body = String(b.body || "").trim().slice(0, 300);
+          if (!body) return res.status(400).json({ error: "Provide a message" });
+          await getMessaging().send({
+            topic: userTopicFor(uid),
+            notification: { title, body },
+            data: { type: "broadcast" },
+            android: { priority: "high", notification: { channelId: "broadcast" } },
+          });
+          return res.status(200).json({ ok: true, notified: uid });
+        }
+
+        case "ban": {
+          needUid();
+          const reason = String(b.reason || "").slice(0, 300);
+          await db.collection("banned").doc(uid).set({
+            reason, bannedAt: FieldValue.serverTimestamp(),
+          });
+          await auth.updateUser(uid, { disabled: true });
+          await auth.revokeRefreshTokens(uid);
+          return res.status(200).json({ ok: true, banned: uid });
+        }
+
+        case "unban": {
+          needUid();
+          await db.collection("banned").doc(uid).delete();
+          await auth.updateUser(uid, { disabled: false });
+          return res.status(200).json({ ok: true, unbanned: uid });
+        }
+
+        case "deleteMessage": {
+          const roomId = String(b.roomId || "").trim();
+          const messageId = String(b.messageId || "").trim();
+          if (!roomId || !messageId) {
+            return res.status(400).json({ error: "Provide roomId and messageId" });
+          }
+          await db.collection("rooms").doc(roomId)
+            .collection("messages").doc(messageId).delete();
+          const reps = await db.collection("reports")
+            .where("messageId", "==", messageId).get();
+          for (const d of reps.docs) await d.ref.delete();
+          return res.status(200).json({ ok: true, deleted: messageId });
+        }
+
+        case "dismissReport": {
+          const messageId = String(b.messageId || "").trim();
+          if (!messageId) return res.status(400).json({ error: "Provide a messageId" });
+          const reps = await db.collection("reports")
+            .where("messageId", "==", messageId).get();
+          for (const d of reps.docs) await d.ref.delete();
+          return res.status(200).json({ ok: true, dismissed: reps.size });
+        }
+
+        case "rooms": {
+          const rooms = await db.collection("rooms").get();
+          const out = await Promise.all(rooms.docs.map(async (r) => {
+            const d = r.data() || {};
+            let messageCount = 0;
+            try {
+              messageCount = (await r.ref.collection("messages").count().get())
+                .data().count;
+            } catch (_) {/* leave 0 */}
+            const ms = (t) => (t && t.toMillis ? t.toMillis() : 0);
+            return {
+              roomId: r.id,
+              name: d.name || "",
+              topic: d.topic || "",
+              category: d.category || "",
+              isPrivate: !!d.isPrivate,
+              isDaily: !!d.isDaily,
+              isBroadcast: !!d.isBroadcast,
+              createdBy: d.createdBy || "",
+              createdByName: d.createdByName || "",
+              createdAt: ms(d.createdAt),
+              lastActivity: ms(d.lastActivity) || ms(d.createdAt),
+              messageCount,
+            };
+          }));
+          out.sort((a, c) => c.lastActivity - a.lastActivity);
+          return res.status(200).json({ ok: true, count: out.length, rooms: out });
+        }
+
+        case "roomMessages": {
+          const roomId = String(b.roomId || "").trim();
+          if (!roomId) return res.status(400).json({ error: "Provide a roomId" });
+          const snap = await db.collection("rooms").doc(roomId)
+            .collection("messages").orderBy("createdAt", "desc").limit(300).get();
+          const messages = snap.docs.map((m) => {
+            const d = m.data() || {};
+            return {
+              messageId: m.id,
+              text: d.text || "",
+              senderId: d.senderId || "",
+              senderName: d.senderName || "",
+              stance: d.stance || "",
+              createdAt: d.createdAt ? d.createdAt.toMillis() : 0,
+            };
+          });
+          return res.status(200).json({ ok: true, count: messages.length, messages });
+        }
+
+        default:
+          return res.status(400).json({ error: "Unknown action: " + action });
+      }
+    } catch (e) {
+      console.error("adminUsers failed:", action, e);
+      return res.status(e.status || 500).json({ error: e.message || String(e) });
     }
   }
 );

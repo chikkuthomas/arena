@@ -18,6 +18,12 @@
 **Play:** 14-day closed test PASSED; production access applied for on
 2026-10-10 (awaiting Google). New full store description sent for review.
 
+**Admin control (server, 2026-10-10):** `adminUsers` function + ban rules;
+the private Admin app (~/admin) can list/search users and rooms, notify one
+user, ban/unban, delete accounts, read rooms and delete messages, and act on
+reports. **Before production launch:** wipe all test users except the admin,
+plus all rooms/messages/reports (ask about keeping the Play Reviewer account).
+
 **v1.14.3 / 1.0.2+10 — Play closed test (versionCode 10):** fixed the
 self-notification after backgrounding — server tags each room push
 `msg_<messageId>`, the app's background handler cancels it when you're the

@@ -2,6 +2,20 @@
 
 All notable changes to Arena will be documented in this file.
 
+## [Server] - October 10, 2026 (night) — Admin user & room control
+
+### ✨ Added (deployed)
+- **`adminUsers` Cloud Function** (x-arena-key) for the Admin app: `list`
+  users, a user's `messages`, `notify` one user (push to `user_<uid>`),
+  `ban` / `unban`, `deleteMessage`, `dismissReport`, `rooms` (latest activity
+  first, with message counts) and `roomMessages`.
+- **Bans:** `ban` disables the Auth account, revokes sessions and writes
+  `banned/{uid}`. `firestore.rules` now checks `notBanned()` on creating rooms,
+  messages, reports, votes and on message updates, so a ban stops posting
+  immediately even with a still-valid token. Verified with a throwaway account:
+  post 200 → ban → post 403 + login USER_DISABLED → unban → post 200.
+- `reportedMessages?min=1` lists every report (default stays 2+ reporters).
+
 ## [1.14.3] - October 10, 2026 (Play versionCode 10, closed test)
 
 ### 🐛 Fixed

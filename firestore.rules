@@ -13,6 +13,19 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    // Banned by the admin (adminUsers Cloud Function writes banned/{uid}).
+    // Checked on every Arena write so a ban bites immediately, even while the
+    // user's current session token is still valid.
+    function notBanned() {
+      return !exists(/databases/$(database)/documents/banned/$(request.auth.uid));
+    }
+
+    // Admin-only ban list. Written by Cloud Functions (which bypass rules).
+    match /banned/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+
     // App config, e.g. the admin's "topic of the day" override at
     // config/dailyOverride. Everyone signed in reads it (each phone applies the
     // override to its daily push); only the admin account may write it.
@@ -25,7 +38,7 @@ service cloud.firestore {
     // Moderation reports. Anyone signed in can file one; for safety nobody can
     // read or change them from the app (review them in the Firebase console).
     match /reports/{reportId} {
-      allow create: if signedIn()
+      allow create: if signedIn() && notBanned()
                     && request.resource.data.reporterId == request.auth.uid;
       allow read, update, delete: if false;
     }
@@ -46,7 +59,7 @@ service cloud.firestore {
     match /rooms/{roomId} {
       allow read: if signedIn();
       // Create only with yourself as the creator.
-      allow create: if signedIn()
+      allow create: if signedIn() && notBanned()
                     && request.resource.data.createdBy == request.auth.uid;
       // Updates are limited to bumping lastActivity (used when a message is
       // sent). The name/topic/creator cannot be changed after creation.
@@ -61,12 +74,12 @@ service cloud.firestore {
       match /messages/{messageId} {
         allow read: if signedIn();
         // You may only post as yourself, and messages can't be edited.
-        allow create: if signedIn()
+        allow create: if signedIn() && notBanned()
                       && request.resource.data.senderId == request.auth.uid;
         // Anyone may change only the `reactions` map (emoji reactions). The
         // message's own author may also edit its `text` (which sets `edited`).
         // sender/stance/createdAt can never be changed.
-        allow update: if signedIn()
+        allow update: if signedIn() && notBanned()
                       && (
                         request.resource.data.diff(resource.data)
                              .affectedKeys().hasOnly(['reactions'])
@@ -93,7 +106,7 @@ service cloud.firestore {
       // tally; you may only cast or change your own vote.
       match /votes/{voterId} {
         allow read: if signedIn();
-        allow write: if signedIn() && request.auth.uid == voterId;
+        allow write: if signedIn() && notBanned() && request.auth.uid == voterId;
       }
     }
   }
