@@ -20,10 +20,31 @@ import 'theme.dart';
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 /// Runs when a push arrives while the app is in the background or terminated.
-/// The message carries a `notification` payload, so Android shows it itself —
-/// there's nothing to do here, but a handler must be registered.
+/// The message carries a `notification` payload, so Android shows it itself.
+/// The one thing to fix up: you're subscribed to your own rooms, so when you
+/// send a message and leave the app, your own message pops up as a
+/// notification. Remove it here, using the per-message tag the server sets.
 @pragma('vm:entry-point')
-Future<void> _firebaseBackgroundHandler(RemoteMessage message) async {}
+Future<void> _firebaseBackgroundHandler(RemoteMessage message) async {
+  try {
+    if (message.data['type'] != 'room_message') return;
+    final senderId = message.data['senderId'] as String?;
+    final messageId = message.data['messageId'] as String?;
+    if (senderId == null || senderId.isEmpty) return;
+    if (messageId == null || messageId.isEmpty) return;
+    final myUid = await RoomNotifyService.savedUid();
+    if (myUid == null || myUid != senderId) return;
+    // Android may post the notification just after this handler starts, so
+    // remove it a few times over the next few seconds.
+    final tag = 'msg_$messageId';
+    for (final ms in const [0, 500, 1500, 3000, 6000]) {
+      if (ms > 0) await Future<void>.delayed(Duration(milliseconds: ms));
+      await NotificationService.cancelPushed(tag);
+    }
+  } catch (_) {
+    // Never let a background push crash anything.
+  }
+}
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -111,6 +132,7 @@ void _wireUserReplyTopic() {
       final previous = _replyTopicUid;
       _replyTopicUid = uid;
       if (previous != null) await RoomNotifyService.unsubscribeUser(previous);
+      await RoomNotifyService.saveUid(uid);
       if (uid == null) {
         // Logged out: drop every push subscription on this device (room bells,
         // trending/participant topics, broadcasts) so notifications stop.

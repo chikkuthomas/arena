@@ -7,18 +7,27 @@
 ## About the Developer
 - **Name:** Rahul
 - **Coding knowledge:** None — Claude builds everything and guides step by step.
-- **OS:** Windows 11 (main dev + builds), Ubuntu laptop (commuting; can edit code
-  but CANNOT build/run Flutter — no Flutter/Java/Android SDK there).
+- **OS:** Windows 11 and the Ubuntu laptop — the laptop is now a full release
+  machine (Flutter build + signing + `firebase deploy` + Play upload via
+  `playstore/deploy.py`).
 - **How to work with Rahul:** plain language, no jargon, small numbered steps,
   explain each command before he runs it.
 
-## CURRENT STATUS (updated 2026-10-02)
+## CURRENT STATUS (updated 2026-10-10)
+
+**Play:** 14-day closed test PASSED; production access applied for on
+2026-10-10 (awaiting Google). New full store description sent for review.
+
+**v1.14.3 / 1.0.2+10 — Play closed test (versionCode 10):** fixed the
+self-notification after backgrounding — server tags each room push
+`msg_<messageId>`, the app's background handler cancels it when you're the
+sender. Server part deployed 2026-10-10.
 
 **v1.14.2 / 1.0.1+9 — Play closed test (versionCode 9):** message long-press
 "Copy text"; profanity warning catches plurals/forms/disguises and runs on edits.
 Server: the sender-exclusion FCM condition was REVERTED (negated conditions are
 never delivered — it silently stopped all room pushes for a few hours).
-Self-notification after backgrounding is a known open issue.
+Self-notification after backgrounding was open here (fixed in v1.14.3).
 
 **v1.14.1 / 1.0.1+8 (2026-10-02) — Play closed test (versionCode 8):** swipe
 left/right between My Rooms and Visited. Also (server-only, deployed): room

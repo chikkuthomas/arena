@@ -2,6 +2,22 @@
 
 All notable changes to Arena will be documented in this file.
 
+## [1.14.3] - October 10, 2026 (Play versionCode 10, closed test)
+
+### 🐛 Fixed
+- **You got a notification for your own message** if you sent it and then left
+  the app straight away. Android shows a backgrounded push before any app code
+  runs, so the in-app "skip my own message" check never saw it. Fix (no change
+  to WHO gets pushed, so delivery is unaffected this time):
+  - Server (`notifyRoomOnNewMessage`, deployed): each room push now carries
+    `data.messageId` and an Android notification `tag` of `msg_<messageId>`.
+  - App: the background handler recognises your own message (uid saved to
+    shared_preferences at sign-in) and cancels that tagged notification
+    (id 0) a few times over ~6 s. It is gone within ~0.5 s; a brief sound may
+    still play. Older app versions just ignore the tag.
+  - Verified with real pushes on the test phone (own message removed, other
+    people's kept) and end-to-end through the deployed function.
+
 ## [1.14.2] - October 2, 2026 (Play versionCode 9, closed test)
 
 ### ✨ Added

@@ -90,10 +90,21 @@ exports.notifyRoomOnNewMessage = onDocumentCreated(
         notification: { title: roomName, body: body },
         // senderId lets the sender's own device drop this push (you subscribe to
         // your room's topic, so FCM would otherwise notify you of your own message).
-        data: { roomId: roomId, type: "room_message", senderId: msg.senderId || "" },
+        // messageId + a per-message tag let the sender's phone find and remove
+        // this exact notification if it arrives while their app is in the
+        // background (Android shows it before any app code can filter it).
+        data: {
+          roomId: roomId,
+          type: "room_message",
+          senderId: msg.senderId || "",
+          messageId: event.params.messageId,
+        },
         android: {
           priority: "high",
-          notification: { channelId: "room_messages" },
+          notification: {
+            channelId: "room_messages",
+            tag: "msg_" + event.params.messageId,
+          },
         },
       });
     } catch (e) {

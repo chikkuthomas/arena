@@ -19,6 +19,33 @@ class RoomNotifyService {
 
   static String _prefKey(String roomId) => 'notify_$roomId';
 
+  static const _uidKey = 'signed_in_uid';
+
+  /// Remembers who is signed in on this phone (null = signed out), so the
+  /// background push handler can recognise your own messages without waiting
+  /// for Firebase Auth to restore itself.
+  static Future<void> saveUid(String? uid) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (uid == null) {
+        await prefs.remove(_uidKey);
+      } else {
+        await prefs.setString(_uidKey, uid);
+      }
+    } catch (_) {/* best-effort */}
+  }
+
+  /// The uid saved by [saveUid], or null.
+  static Future<String?> savedUid() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+      return prefs.getString(_uidKey);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// One topic every device subscribes to, so an admin can push a single
   /// broadcast that reaches every user at once (see the broadcastTopic Cloud
   /// Function). MUST match ALL_USERS_TOPIC in the Cloud Function.
