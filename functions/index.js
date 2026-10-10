@@ -716,7 +716,8 @@ exports.createVerifiedUser = onRequest(
 //
 //   list                                  → every user (name, email, status)
 //   messages      { uid }                 → that user's recent messages
-//   notify        { uid, title, body }    → push to that one user's phones
+//   notify        { uid | uids | all:true, title, body } → push to one user,
+//                                           selected users, or everyone
 //   ban           { uid, reason? }        → block from logging in and posting
 //   unban         { uid }
 //   deleteMessage { roomId, messageId }   → remove a message (+ its reports)
@@ -805,17 +806,33 @@ exports.adminUsers = onRequest(
         }
 
         case "notify": {
-          needUid();
+          // One user (uid), several (uids: [...]), or everyone (all: true).
           const title = String(b.title || "Arena").slice(0, 80);
           const body = String(b.body || "").trim().slice(0, 300);
           if (!body) return res.status(400).json({ error: "Provide a message" });
-          await getMessaging().send({
-            topic: userTopicFor(uid),
+          const payload = {
             notification: { title, body },
             data: { type: "broadcast" },
             android: { priority: "high", notification: { channelId: "broadcast" } },
-          });
-          return res.status(200).json({ ok: true, notified: uid });
+          };
+          if (b.all === true) {
+            await getMessaging().send({ topic: ALL_USERS_TOPIC, ...payload });
+            return res.status(200).json({ ok: true, notified: "all" });
+          }
+          const uids = (Array.isArray(b.uids) ? b.uids : [uid])
+            .map((x) => String(x || "").trim()).filter(Boolean);
+          if (uids.length === 0) return res.status(400).json({ error: "Provide uids" });
+          let sent = 0;
+          const failed = [];
+          for (const u of uids) {
+            try {
+              await getMessaging().send({ topic: userTopicFor(u), ...payload });
+              sent++;
+            } catch (e) {
+              failed.push(u);
+            }
+          }
+          return res.status(200).json({ ok: true, sent, failed });
         }
 
         case "ban": {
