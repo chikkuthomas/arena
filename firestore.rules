@@ -29,10 +29,13 @@ service cloud.firestore {
     // App config, e.g. the admin's "topic of the day" override at
     // config/dailyOverride. Everyone signed in reads it (each phone applies the
     // override to its daily push); only the admin account may write it.
+    // email_verified is required too: an unverified token must never be able to
+    // claim the admin address.
     match /config/{doc} {
       allow read: if signedIn();
       allow write: if signedIn()
-                   && request.auth.token.email == 'cryptork97@gmail.com';
+                   && request.auth.token.email == 'cryptork97@gmail.com'
+                   && request.auth.token.email_verified == true;
     }
 
     // Moderation reports. Anyone signed in can file one; for safety nobody can
@@ -48,8 +51,9 @@ service cloud.firestore {
       allow read: if signedIn();
       allow write: if signedIn() && request.auth.uid == userId;
 
-      // PetBloom stores each user's pets, reminders and heat dates under
-      // their own uid. Only the owner may read or write that subtree.
+      // Everything under a user's own uid (joinedRooms, hiddenRooms — see
+      // RoomService) is private to them. Load-bearing: the app reads and
+      // writes those subcollections directly.
       match /{document=**} {
         allow read, write: if signedIn() && request.auth.uid == userId;
       }
@@ -61,31 +65,70 @@ service cloud.firestore {
       // Create only with yourself as the creator.
       allow create: if signedIn() && notBanned()
                     && request.resource.data.createdBy == request.auth.uid;
-      // Updates are limited to bumping lastActivity (used when a message is
-      // sent). The name/topic/creator cannot be changed after creation.
-      allow update: if signedIn()
-                    && request.resource.data.createdBy == resource.data.createdBy
-                    && request.resource.data.name == resource.data.name
-                    && request.resource.data.topic == resource.data.topic;
+      // Updates are limited to the activity counters that sending a message
+      // bumps (see RoomService.sendMessage) — and nothing else.
+      //
+      // This MUST be an allowlist, not a denylist. Pinning only
+      // createdBy/name/topic used to leave every other field writable by any
+      // signed-in user, which let an attacker flip `isPrivate` to false on
+      // someone else's private room (verifyRoomPassword returns ok for a
+      // non-private room, so that unlocked it for everyone) or rewrite its
+      // joinCode. The room's creator changes settings via Cloud Functions,
+      // which bypass these rules, so no client needs wider write access.
+      allow update: if signedIn() && notBanned()
+                    && request.resource.data.diff(resource.data)
+                         .affectedKeys().hasOnly(['lastActivity', 'messageCount']);
       // Only the creator can delete their room.
       allow delete: if signedIn() && resource.data.createdBy == request.auth.uid;
 
       // Messages inside a room.
       match /messages/{messageId} {
+        // A reaction edit may only touch the caller's own uid key. Split in two
+        // because older messages predate the `reactions` field (Message.fromDoc
+        // still defaults it to {}), and calling diff() on a missing map is an
+        // evaluation error — which would deny reacting to any legacy message.
+        function changesOnlyMyExistingReaction() {
+          return ('reactions' in resource.data)
+                 && request.resource.data.reactions
+                      .diff(resource.data.reactions)
+                      .affectedKeys().hasOnly([request.auth.uid]);
+        }
+        function addsOnlyMyFirstReaction() {
+          return !('reactions' in resource.data)
+                 && request.resource.data.reactions
+                      .keys().hasOnly([request.auth.uid]);
+        }
+
         allow read: if signedIn();
-        // You may only post as yourself, and messages can't be edited.
+        // You may only post as yourself. The size caps are abuse limits, not UI
+        // limits: the chat field is unbounded, but a direct API caller could
+        // otherwise write multi-hundred-KB docs (Firestore allows ~1MiB) and
+        // run up read costs for everyone in the room. Generous on purpose.
         allow create: if signedIn() && notBanned()
-                      && request.resource.data.senderId == request.auth.uid;
-        // Anyone may change only the `reactions` map (emoji reactions). The
-        // message's own author may also edit its `text` (which sets `edited`).
-        // sender/stance/createdAt can never be changed.
+                      && request.resource.data.senderId == request.auth.uid
+                      && request.resource.data.text is string
+                      && request.resource.data.text.size() <= 5000
+                      && request.resource.data.createdAt == request.time;
+        // Anyone may react, but only under their OWN uid key: the client writes
+        // `reactions.<myUid>` (see RoomService.toggleReaction), so the only
+        // reaction entry a request may add/change/remove is its own. Without
+        // the per-key check, `hasOnly(['reactions'])` let any user overwrite
+        // the whole map — forging or wiping everyone else's reactions.
+        // The message's own author may also edit its `text` (which sets
+        // `edited`). sender/stance/createdAt can never be changed.
         allow update: if signedIn() && notBanned()
                       && (
-                        request.resource.data.diff(resource.data)
+                        (request.resource.data.diff(resource.data)
                              .affectedKeys().hasOnly(['reactions'])
+                         && (changesOnlyMyExistingReaction()
+                             || addsOnlyMyFirstReaction()))
                         || (resource.data.senderId == request.auth.uid
                             && request.resource.data.diff(resource.data)
-                                 .affectedKeys().hasOnly(['text', 'edited']))
+                                 .affectedKeys().hasOnly(['text', 'edited'])
+                            // Same abuse cap as create — otherwise an edit is a
+                            // way around it.
+                            && request.resource.data.text is string
+                            && request.resource.data.text.size() <= 5000)
                       );
         // You may delete your own message (used by moderation later).
         allow delete: if signedIn()
