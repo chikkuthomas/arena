@@ -1,7 +1,12 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'models/message.dart';
@@ -51,6 +56,14 @@ Future<void> main() async {
   // Connects the app to your Firebase project by reading the
   // android/app/google-services.json file added during setup.
   await Firebase.initializeApp();
+  _initCrashlytics();
+  // Attests that requests really come from this app on a real device, so the
+  // public Firebase config in the APK isn't enough on its own to hit the
+  // backend from a script. Best-effort and time-capped for the same reason as
+  // the calls below: it talks to Play services, and must never be able to hang
+  // startup. Enforcement is switched on in the Firebase console, not here, so
+  // this is safe to ship while App Check is still in monitoring mode.
+  await _bestEffort(_initAppCheck());
   // Set up the daily "topic of the day" alerts. Best-effort — wrapped so it can
   // never block or crash startup.
   await _bestEffort(NotificationService.init());
@@ -63,6 +76,33 @@ Future<void> main() async {
   _wireUserReplyTopic();
   runApp(const ArenaApp());
 }
+
+/// Sends uncaught Dart and native crashes to Crashlytics.
+///
+/// Debug builds only log locally — otherwise every crash while developing
+/// would land in the production dashboard and bury the real user reports.
+void _initCrashlytics() {
+  final crashlytics = FirebaseCrashlytics.instance;
+  crashlytics.setCrashlyticsCollectionEnabled(!kDebugMode);
+  // Framework errors (build/layout/paint) and anything uncaught on the Dart
+  // side, including async errors outside the widget tree.
+  FlutterError.onError = crashlytics.recordFlutterFatalError;
+  PlatformDispatcher.instance.onError = (error, stack) {
+    crashlytics.recordError(error, stack, fatal: true);
+    return true;
+  };
+}
+
+/// Turns on App Check with Play Integrity in release builds.
+///
+/// Debug builds use the debug provider: Play Integrity only attests APKs
+/// signed with the upload/release key, so a local debug build would fail
+/// attestation and (once enforcement is on) be locked out of Firebase.
+Future<void> _initAppCheck() => FirebaseAppCheck.instance.activate(
+      providerAndroid: kDebugMode
+          ? const AndroidDebugProvider()
+          : const AndroidPlayIntegrityProvider(),
+    );
 
 /// Runs an optional start-up step, but never lets it hold the app hostage.
 ///

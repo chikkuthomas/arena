@@ -28,6 +28,8 @@ dependencies:
   cloud_functions: ^6.3.3
   in_app_review: ^2.0.12
   share_plus: ^13.3.0
+  firebase_app_check: ^0.4.8
+  firebase_crashlytics: ^5.4.0
 
   # NOTE: The packages below are added during setup with ONE command so their
   # versions always match your Flutter install (see SETUP_WINDOWS.md, Step 3):

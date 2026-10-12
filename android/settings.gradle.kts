@@ -23,6 +23,9 @@ plugins {
     id("org.jetbrains.kotlin.android") version "2.3.20" apply false
     // Firebase: reads google-services.json and configures the app.
     id("com.google.gms.google-services") version "4.4.2" apply false
+    // Crashlytics: uploads the symbol/mapping files at build time so release
+    // stack traces are readable instead of obfuscated addresses.
+    id("com.google.firebase.crashlytics") version "3.0.2" apply false
 }
 
 include(":app")

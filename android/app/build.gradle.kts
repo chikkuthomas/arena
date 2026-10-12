@@ -7,6 +7,8 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
     // Firebase: applies the config from google-services.json.
     id("com.google.gms.google-services")
+    // Crashlytics: must come after google-services.
+    id("com.google.firebase.crashlytics")
 }
 
 // Load the release signing credentials from android/key.properties (gitignored).
