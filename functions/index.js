@@ -548,6 +548,79 @@ exports.reportedMessages = onRequest(
   }
 );
 
+// ---- Shared: erase one user and everything they own ----------------------
+// Used by BOTH the admin endpoint (looks users up by email) and the
+// self-service deleteMyAccount callable (uses the caller's own auth token).
+// Pass a one-off snapshot of /rooms so bulk admin deletes read it once.
+// Irreversible. Idempotent enough that a stale rooms entry is harmless.
+async function purgeUser(uid, roomsSnap) {
+  const db = getFirestore();
+  const auth = getAuth();
+  let messagesDeleted = 0;
+  let roomsDeleted = 0;
+
+  // Reports they filed.
+  const reps = await db
+    .collection("reports")
+    .where("reporterId", "==", uid)
+    .get();
+  for (const d of reps.docs) await d.ref.delete();
+
+  // Walk every room: delete rooms they created outright, otherwise strip
+  // their messages and their vote from that room.
+  for (const roomDoc of roomsSnap.docs) {
+    const roomRef = roomDoc.ref;
+    if ((roomDoc.data() || {}).createdBy === uid) {
+      await db.recursiveDelete(roomRef);
+      roomsDeleted++;
+      continue;
+    }
+    const msgs = await roomRef
+      .collection("messages")
+      .where("senderId", "==", uid)
+      .get();
+    for (const m of msgs.docs) {
+      await m.ref.delete();
+      messagesDeleted++;
+    }
+    await roomRef.collection("votes").doc(uid).delete();
+  }
+
+  // Their profile doc + subcollections (joinedRooms, hiddenRooms…).
+  await db.recursiveDelete(db.collection("users").doc(uid));
+  // Finally the login account itself.
+  await auth.deleteUser(uid);
+
+  return { messagesDeleted, roomsDeleted };
+}
+
+// ---- Let a signed-in user delete their OWN account ----------------------
+// Google Play requires an in-app account deletion path for any app that lets
+// people create accounts. This is deliberately a callable (not an onRequest
+// guarded by BROADCAST_SECRET): identity comes from the caller's auth token,
+// so the app never needs to hold a shared secret. A user can only ever delete
+// themselves — the uid is taken from the token, never from the request body.
+exports.deleteMyAccount = onCall({ region: "asia-south1" }, async (req) => {
+  if (!req.auth) {
+    throw new HttpsError("unauthenticated", "Sign in first.");
+  }
+  // Belt-and-braces against an accidental client call; the real confirmation
+  // is the two-step dialog in the app.
+  if (!req.data || req.data.confirm !== "DELETE") {
+    throw new HttpsError("invalid-argument", 'Send { confirm: "DELETE" }.');
+  }
+  const uid = req.auth.uid;
+  const db = getFirestore();
+  const roomsSnap = await db.collection("rooms").get();
+  try {
+    const stats = await purgeUser(uid, roomsSnap);
+    return { ok: true, ...stats };
+  } catch (e) {
+    console.error("deleteMyAccount failed for", uid, e);
+    throw new HttpsError("internal", "Could not delete the account.");
+  }
+});
+
 // ---- Admin: delete user accounts + all their data (call from Admin app) --
 // For each email: removes the Firebase Auth account AND everything they own —
 // their profile (users/{uid} + subcollections), every message they posted, any
@@ -597,40 +670,7 @@ exports.deleteUserAccount = onRequest(
           results.push({ email, status: "not_found" });
           continue;
         }
-        let messagesDeleted = 0;
-        let roomsDeleted = 0;
-
-        // Reports they filed.
-        const reps = await db
-          .collection("reports")
-          .where("reporterId", "==", uid)
-          .get();
-        for (const d of reps.docs) await d.ref.delete();
-
-        // Walk every room: delete rooms they created outright, otherwise strip
-        // their messages and their vote from that room.
-        for (const roomDoc of roomsSnap.docs) {
-          const roomRef = roomDoc.ref;
-          if ((roomDoc.data() || {}).createdBy === uid) {
-            await db.recursiveDelete(roomRef);
-            roomsDeleted++;
-            continue;
-          }
-          const msgs = await roomRef
-            .collection("messages")
-            .where("senderId", "==", uid)
-            .get();
-          for (const m of msgs.docs) {
-            await m.ref.delete();
-            messagesDeleted++;
-          }
-          await roomRef.collection("votes").doc(uid).delete();
-        }
-
-        // Their profile doc + subcollections (joinedRooms, hiddenRooms, pets…).
-        await db.recursiveDelete(db.collection("users").doc(uid));
-        // Finally the login account itself.
-        await auth.deleteUser(uid);
+        const { messagesDeleted, roomsDeleted } = await purgeUser(uid, roomsSnap);
 
         results.push({
           email,

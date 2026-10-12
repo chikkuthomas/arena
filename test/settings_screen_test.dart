@@ -25,10 +25,51 @@ void main() {
       'Replay walkthrough',
       'Terms of Service',
       'Privacy Policy',
+      'Delete account',
     ]) {
       await tester.scrollUntilVisible(find.text(label), 120,
           scrollable: find.byType(Scrollable).first);
       expect(find.text(label), findsOneWidget);
     }
+  });
+
+  // Deleting an account is irreversible, so the guard matters more than the
+  // happy path (which needs Firebase and can't run here): the Delete button
+  // must stay disabled until DELETE is typed exactly.
+  testWidgets('delete-account dialog keeps Delete disabled until confirmed',
+      (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: SettingsScreen()));
+
+    await tester.scrollUntilVisible(find.text('Delete account'), 120,
+        scrollable: find.byType(Scrollable).first);
+    await tester.tap(find.text('Delete account'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Delete account?'), findsOneWidget);
+
+    TextButton deleteButton() => tester.widget<TextButton>(
+          find.ancestor(
+            of: find.text('Delete'),
+            matching: find.byType(TextButton),
+          ),
+        );
+
+    // Nothing typed yet.
+    expect(deleteButton().onPressed, isNull);
+
+    // A near-miss must not arm it.
+    await tester.enterText(find.byType(TextField), 'delete me');
+    await tester.pump();
+    expect(deleteButton().onPressed, isNull);
+
+    // The exact word arms it (case-insensitively, since the field forces caps).
+    await tester.enterText(find.byType(TextField), 'DELETE');
+    await tester.pump();
+    expect(deleteButton().onPressed, isNotNull);
+
+    // Cancel backs out without deleting anything.
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(find.text('Delete account?'), findsNothing);
   });
 }
