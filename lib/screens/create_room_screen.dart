@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../data/profanity.dart';
 import '../models/message.dart';
 import '../models/room.dart';
 import '../services/auth_service.dart';
+import '../services/room_notify_service.dart';
 import '../services/room_service.dart';
 import '../theme.dart';
 import '../widgets/join_stance_dialog.dart';
@@ -37,6 +39,35 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
     super.dispose();
   }
 
+  /// Warns before creating a room whose name or topic contains offensive
+  /// language. Returns true if the user chooses to create it anyway.
+  Future<bool?> _confirmProfanity() {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(Icons.warning_amber_rounded,
+            color: Colors.orange, size: 40),
+        title: const Text('Think before you post'),
+        content: const Text(
+          'The room name or topic contains offensive language. Abusive, '
+          'threatening or hateful content can get you banned and may lead to '
+          'real trouble or legal issues.\n\nAre you sure you want to create it?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Edit'),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Create anyway'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _create() async {
     final name = _name.text.trim();
     final topic = _topic.text.trim();
@@ -51,6 +82,12 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
     if (_isPrivate && _password.text.trim().length < 4) {
       setState(() => _error = 'Private rooms need a password (4+ characters).');
       return;
+    }
+    // Warn (but don't block) if the room name or topic has abusive language —
+    // same check used before sending a message.
+    if (hasProfanity(name) || hasProfanity(topic)) {
+      final proceed = await _confirmProfanity();
+      if (proceed != true || !mounted) return;
     }
     setState(() {
       _busy = true;
@@ -67,6 +104,8 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
         createdBy: user.uid,
         createdByName: _auth.displayName,
       );
+      // The creator wants to hear when people argue in their room.
+      await RoomNotifyService.autoEnable(id);
       final room = Room(
         id: id,
         name: name,

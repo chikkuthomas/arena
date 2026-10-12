@@ -204,6 +204,24 @@ class RoomService {
     await _rooms.doc(roomId).collection('messages').doc(messageId).delete();
   }
 
+  /// Edits the text of a message you sent. Marks it `edited` so the UI can show
+  /// an "(edited)" note. Firestore rules only let the original author do this.
+  Future<void> editMessage(
+      String roomId, String messageId, String newText) async {
+    await _rooms.doc(roomId).collection('messages').doc(messageId).update({
+      'text': newText.trim(),
+      'edited': true,
+    });
+  }
+
+  /// Deletes a whole room you created (and all its messages/votes) via the
+  /// deleteMyRoom Cloud Function, which checks you're the creator server-side.
+  Future<void> deleteMyRoom(String roomId) async {
+    final callable = FirebaseFunctions.instanceFor(region: 'asia-south1')
+        .httpsCallable('deleteMyRoom');
+    await callable.call<dynamic>({'roomId': roomId});
+  }
+
   /// Adds or changes the current user's reaction on a message. Passing the same
   /// emoji the user already has removes it (toggle off).
   Future<void> toggleReaction({
@@ -306,8 +324,32 @@ class RoomService {
                 isPrivate: m['isPrivate'] ?? false,
                 createdBy: m['createdBy'] ?? '',
                 createdByName: m['createdByName'] ?? 'Someone',
+                lastSeenCount: (m['lastSeenCount'] as num?)?.toInt() ?? 0,
               );
             }).toList());
+  }
+
+  /// Live message count for a room (used to badge unread messages in the list).
+  Stream<int> watchMessageCount(String roomId) {
+    return _rooms.doc(roomId).snapshots().map(
+        (d) => (d.data()?['messageCount'] as num?)?.toInt() ?? 0);
+  }
+
+  /// Marks a room as read for [userId] up to its current message count, so the
+  /// unread badge clears. Called when the user opens/leaves the chat.
+  Future<void> markRoomRead(String userId, String roomId) async {
+    try {
+      final joinedRef = _joinedCol(userId).doc(roomId);
+      // Only track for rooms already in the user's list — don't create a stray
+      // (nameless) Visited entry for rooms opened straight from a notification.
+      final joined = await joinedRef.get();
+      if (!joined.exists) return;
+      final roomDoc = await _rooms.doc(roomId).get();
+      final count = (roomDoc.data()?['messageCount'] as num?)?.toInt() ?? 0;
+      await joinedRef.set({'lastSeenCount': count}, SetOptions(merge: true));
+    } catch (_) {
+      // Best-effort — the badge is a nicety, never break the chat over it.
+    }
   }
 
   /// Scrambles a password with SHA-256 so the real password is never stored.

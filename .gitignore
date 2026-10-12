@@ -21,3 +21,7 @@ lib/firebase_options.dart
 android/app/google-services.json
 ios/Runner/GoogleService-Info.plist
 google-services.json.arena-bak
+
+# Never commit any google-services.json or its backups (contains project keys)
+android/app/google-services.json*
+*.stale-bak

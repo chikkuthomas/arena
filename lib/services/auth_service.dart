@@ -106,6 +106,21 @@ class AuthService {
     await user.reload();
   }
 
+  /// Changes the display name shown next to the user's messages. Updates both
+  /// the Firebase Auth profile and the Firestore profile doc. (Messages already
+  /// sent keep the old name, since it's denormalized onto each one.)
+  Future<void> updateDisplayName(String name) async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+    final trimmed = name.trim();
+    await user.updateDisplayName(trimmed);
+    await _db.collection('users').doc(user.uid).set(
+      {'displayName': trimmed},
+      SetOptions(merge: true),
+    );
+    await user.reload();
+  }
+
   /// Logs an existing account in.
   Future<void> logIn({
     required String email,

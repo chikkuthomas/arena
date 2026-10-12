@@ -53,6 +53,66 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  /// Opens a dialog to change the display name shown next to your messages.
+  Future<void> _editName() async {
+    final controller = TextEditingController(text: _auth.displayName);
+    String? error;
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (dialogContext, setLocal) {
+            return AlertDialog(
+              title: const Text('Display name'),
+              content: TextField(
+                controller: controller,
+                autofocus: true,
+                textCapitalization: TextCapitalization.words,
+                decoration: InputDecoration(
+                  hintText: 'Name shown in debates',
+                  errorText: error,
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    final v = controller.text.trim();
+                    if (v.length < 2) {
+                      setLocal(() => error = 'At least 2 characters.');
+                      return;
+                    }
+                    Navigator.pop(dialogContext, v);
+                  },
+                  child: const Text('Save'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (newName == null || newName == _auth.displayName) return;
+    try {
+      await _auth.updateDisplayName(newName);
+      if (mounted) {
+        setState(() {}); // refresh the name shown on this screen
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Display name updated')),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not save — check your internet.')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -65,13 +125,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
           children: [
             UserAvatar(emoji: _selected, name: _auth.displayName, size: 96),
             const SizedBox(height: 12),
-            Text(
-              _auth.displayName,
-              style: const TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-                color: AppColors.textDark,
-              ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Flexible(
+                  child: Text(
+                    _auth.displayName,
+                    style: const TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.textDark,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Change display name',
+                  icon: const Icon(Icons.edit, size: 20),
+                  color: AppColors.secondary,
+                  onPressed: _editName,
+                ),
+              ],
             ),
             if (_auth.email != null)
               Padding(

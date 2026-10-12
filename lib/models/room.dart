@@ -20,6 +20,12 @@ class Room {
   final DateTime? lastActivity; // updated on every message, used to sort rooms
   final int messageCount; // running total of messages, shown on the room card
 
+  /// The room's messageCount the last time this user viewed it (from their
+  /// joinedRooms record). Not stored on the room doc — used only to compute the
+  /// unread badge in the Visited list. Defaults to messageCount so unseen rooms
+  /// don't wrongly look "unread".
+  final int lastSeenCount;
+
   Room({
     required this.id,
     required this.name,
@@ -33,6 +39,7 @@ class Room {
     this.createdAt,
     this.lastActivity,
     this.messageCount = 0,
+    this.lastSeenCount = 0,
   });
 
   /// Builds a Room from a Firestore document snapshot.

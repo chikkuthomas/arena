@@ -7,15 +7,84 @@
 ## About the Developer
 - **Name:** Rahul
 - **Coding knowledge:** None — Claude builds everything and guides step by step.
-- **OS:** Windows 11 (main dev + builds), Ubuntu laptop (commuting; can edit code
-  but CANNOT build/run Flutter — no Flutter/Java/Android SDK there).
+- **OS:** Windows 11 and the Ubuntu laptop — the laptop is now a full release
+  machine (Flutter build + signing + `firebase deploy` + Play upload via
+  `playstore/deploy.py`).
 - **How to work with Rahul:** plain language, no jargon, small numbered steps,
   explain each command before he runs it.
 
-## CURRENT STATUS (updated 2026-07-13)
+## CURRENT STATUS (updated 2026-10-10)
+
+**Play:** 14-day closed test PASSED; production access applied for on
+2026-10-10 (awaiting Google). New full store description sent for review.
+
+**Admin control (server, 2026-10-10):** `adminUsers` function + ban rules;
+the private Admin app (~/admin) can list/search users and rooms, notify one
+user, ban/unban, delete accounts, read rooms and delete messages, and act on
+reports. **Before production launch:** wipe all test users except the admin,
+plus all rooms/messages/reports (ask about keeping the Play Reviewer account).
+
+**v1.14.3 / 1.0.2+10 — Play closed test (versionCode 10):** fixed the
+self-notification after backgrounding — server tags each room push
+`msg_<messageId>`, the app's background handler cancels it when you're the
+sender. Server part deployed 2026-10-10.
+
+**v1.14.2 / 1.0.1+9 — Play closed test (versionCode 9):** message long-press
+"Copy text"; profanity warning catches plurals/forms/disguises and runs on edits.
+Server: the sender-exclusion FCM condition was REVERTED (negated conditions are
+never delivered — it silently stopped all room pushes for a few hours).
+Self-notification after backgrounding was open here (fixed in v1.14.3).
+
+**v1.14.1 / 1.0.1+8 (2026-10-02) — Play closed test (versionCode 8):** swipe
+left/right between My Rooms and Visited. Also (server-only, deployed): room
+pushes now exclude the sender's devices via an FCM condition, so you no longer
+get a notification for your own message after leaving the app.
+
+**v1.14.0 / 1.0.1+7 (2026-10-02) — SHIPPED to Play closed test (versionCode 7):**
+merged PR #1 (other PC: Settings w/ Rate + Share Arena, one-time in-app review
+prompt, welcome walkthrough, share-sheet room invites, 5 s startup cap for the
+blank-white-screen hang, ASO text in playstore/STORE_LISTING.md) on top of
+v1.13.2's notification fixes. share_plus is now 13 (needed `flutter clean`
+once — stale Kotlin build cache broke the first build). The ASO listing text
+must still be pasted into Play Console. Tester docs (feedback report +
+production-access answers) came from Testers Community, a paid provider.
+
+**v1.13.2 (2026-09-27) — SHIPPED to Play closed test (versionCode 6), app-only:**
+room bell now ON by default for every room you're part of (opening a room, and
+on login/startup `autoEnableMyRooms` subscribes all Visited + My Rooms; explicit
+off respected) — v1.13.1's post/create-only trigger left readers unsubscribed.
+Visited tab cards now show the live message count (snapshots lacked it).
+Google sign-in on APK (upload-key) installs fixed by registering the upload
+key SHA-1/SHA-256 in Firebase (config only). Superseded v5 while it was still
+in Play review.
+
+**v1.13.1 (2026-09-27) — SHIPPED to Play closed test (versionCode 5), app-only:**
+room 🔔 bell now auto-turns ON when you create/post in a room (it defaulted OFF
+and nobody was subscribed, so room pushes reached no one); daily Topic of the Day
+notification fixed (manifest was missing flutter_local_notifications'
+ScheduledNotificationReceiver + boot receiver). Android package is
+`com.cryptork.arena`. Unfinished 6-digit room-code work parked on branch
+`wip/room-codes` (not released).
 
 > This section is the up-to-date snapshot. The sections further down are older
 > background; when they disagree, trust this + `CHANGELOG.md` + `git log`.
+
+**Now in Google Play closed testing** (14-day track) as **Arena (Early Access)**
+by **C-Caps**, `com.cryptork.arena`. **Google Sign-In needs the Play App Signing
+key's SHA-1 AND SHA-256 in Firebase** (Play re-signs the AAB, so the upload-key
+SHA alone fails with "not registered to use OAuth2.0"). Added 2026-07-18 — sign-in
+verified working on the Play build after that.
+
+**v1.13.0 (2026-07-18) — needs CF redeploy + rules publish + rebuild:** fixed
+private-room password join (creator no longer prompted; outsiders verified via
+`verifyRoomPassword` — the old local check always failed); no self-notification
+(room pushes now carry `senderId`, the device drops its own); notifications stop
+after logout (logout deletes the FCM token, clearing all room/broadcast subs);
+swipe-to-reply reopens the keyboard. Added: **Leave room** (⋮ menu in chat),
+**Delete room** for the creator (new callable `deleteMyRoom`), **Edit message**
+(rules now let an author edit their own `text`), **Change display name** (Profile
+✏️), and the message profanity check now also runs on the room **name + topic**
+at creation.
 
 **Auth & accounts (Firebase project `arena-a049d`, on the Blaze plan):**
 - Email/password + Google sign-in + Terms/Privacy gating (Terms only on signup).
@@ -112,6 +181,7 @@ The value is baked into the **private Admin app** (`~/admin`, `lib/config.dart`)
 | `clearAllRooms` | HTTP (secret) | wipe ALL rooms (`confirm:"DELETE ALL ROOMS"`) |
 | `reportedMessages` | HTTP (secret) | messages with 2+ distinct reporters |
 | `verifyRoomPassword` | Callable (auth) | server-side private-room password check |
+| `deleteMyRoom` | Callable (auth) | a room's creator deletes it + all its messages |
 | `cleanupStaleRooms` | Scheduled (daily) | delete empty rooms idle 7+ days |
 
 Base URL: `https://asia-south1-arena-a049d.cloudfunctions.net/<name>`. HTTP admin

@@ -144,6 +144,18 @@ class MessageBubble extends StatelessWidget {
                           message.text,
                           style: TextStyle(fontSize: 15, color: textColor),
                         ),
+                        if (message.edited)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Text(
+                              'edited',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontStyle: FontStyle.italic,
+                                color: textColor.withValues(alpha: 0.6),
+                              ),
+                            ),
+                          ),
                       ],
                     ),
                   ),

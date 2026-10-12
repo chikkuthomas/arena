@@ -33,6 +33,9 @@ class Message {
   /// can push a "someone replied to you" notification to that specific user.
   final String? replyToSenderId;
 
+  /// True once the author has edited the message's text.
+  final bool edited;
+
   Message({
     required this.id,
     required this.text,
@@ -46,6 +49,7 @@ class Message {
     this.replyToText,
     this.replyToSender,
     this.replyToSenderId,
+    this.edited = false,
   });
 
   bool get isReply => replyToId != null;
@@ -66,6 +70,7 @@ class Message {
       replyToText: d['replyToText'],
       replyToSender: d['replyToSender'],
       replyToSenderId: d['replyToSenderId'],
+      edited: d['edited'] == true,
     );
   }
 

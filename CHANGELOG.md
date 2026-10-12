@@ -2,6 +2,183 @@
 
 All notable changes to Arena will be documented in this file.
 
+## [Server] - October 10, 2026 (night) — Admin user & room control
+
+### ✨ Added (deployed)
+- **`adminUsers` Cloud Function** (x-arena-key) for the Admin app: `list`
+  users, a user's `messages`, `notify` one user (push to `user_<uid>`),
+  `ban` / `unban`, `deleteMessage`, `dismissReport`, `rooms` (latest activity
+  first, with message counts) and `roomMessages`.
+- **Bans:** `ban` disables the Auth account, revokes sessions and writes
+  `banned/{uid}`. `firestore.rules` now checks `notBanned()` on creating rooms,
+  messages, reports, votes and on message updates, so a ban stops posting
+  immediately even with a still-valid token. Verified with a throwaway account:
+  post 200 → ban → post 403 + login USER_DISABLED → unban → post 200.
+- `reportedMessages?min=1` lists every report (default stays 2+ reporters).
+
+## [1.14.3] - October 10, 2026 (Play versionCode 10, closed test)
+
+### 🐛 Fixed
+- **You got a notification for your own message** if you sent it and then left
+  the app straight away. Android shows a backgrounded push before any app code
+  runs, so the in-app "skip my own message" check never saw it. Fix (no change
+  to WHO gets pushed, so delivery is unaffected this time):
+  - Server (`notifyRoomOnNewMessage`, deployed): each room push now carries
+    `data.messageId` and an Android notification `tag` of `msg_<messageId>`.
+  - App: the background handler recognises your own message (uid saved to
+    shared_preferences at sign-in) and cancels that tagged notification
+    (id 0) a few times over ~6 s. It is gone within ~0.5 s; a brief sound may
+    still play. Older app versions just ignore the tag.
+  - Verified with real pushes on the test phone (own message removed, other
+    people's kept) and end-to-end through the deployed function.
+
+## [1.14.2] - October 2, 2026 (Play versionCode 9, closed test)
+
+### ✨ Added
+- **Copy text** in the message long-press menu (copies to the clipboard).
+
+### 🐛 Fixed
+- **"For fucks sake" wasn't flagged.** The bad-language warning matched exact
+  words only, so plurals and other forms ("fucks", "fucked", "bitches",
+  "shitty") slipped through. Now: whole word + plural "s", any word starting
+  with an unambiguous vulgar stem, common disguises ("f*ck", "fck", "stfu").
+  Ambiguous roots (dick/cock/prick/rape) stay whole-word so cocktail, Dickens,
+  prickly and rapeseed aren't flagged. Covered by `test/profanity_test.dart`.
+- **Editing a message skipped the warning** — edits now get the same prompt.
+
+## [Server] - October 2, 2026 (evening) — REVERT
+
+### 🐛 Fixed
+- **Room notifications stopped arriving** after the earlier server change. The
+  FCM condition `'room_X' in topics && !('user_<sender>' in topics)` passes
+  `validate_only` but FCM does not deliver negated conditions. Proven with two
+  real test pushes to one account: plain topic arrived, the `!` condition never
+  did. Reverted to plain `topic:` and redeployed. Self-notifications after
+  backgrounding are back as a known issue until a different fix ships.
+
+## [1.14.1] - October 2, 2026 (Play versionCode 8, closed test)
+
+### ✨ Added
+- **Swipe between My Rooms and Visited** on the home screen. The list is now a
+  two-page `PageView`; swiping and the toggle buttons stay in sync.
+
+## [Server] - October 2, 2026 (Cloud Function only — no app update needed)
+
+### 🐛 Fixed
+- **You got a notification for your own message** if you left the app right
+  after sending. The in-app `senderId` filter only runs while Arena is open; a
+  backgrounded app's push is drawn by Android itself. `notifyRoomOnNewMessage`
+  now targets the FCM condition `'room_X' in topics && !('user_<sender>' in
+  topics)`, so the sender's devices are excluded server-side. Validated with an
+  FCM dry run, deployed to asia-south1. Works for every app version that
+  subscribes to `user_<uid>` (v1.6.0+).
+
+## [1.14.0] - October 2, 2026 (Play versionCode 7, closed test)
+
+Merges PR #1 (built on the other PC as "1.0.1+3", answering the Testers
+Community feedback report) on top of v1.13.2's notification fixes.
+
+### ✨ Added (from PR #1)
+- **Settings screen** (account menu → Settings): Rate Arena (opens the Play
+  listing), Share Arena (share sheet invite), Replay walkthrough, Terms/Privacy.
+- **One-time in-app review prompt** after 5 room visits (Google In-App Review).
+- **Welcome walkthrough** for new users, with Skip.
+- Room share dialog uses the real share sheet (falls back to clipboard).
+- ASO-optimised store listing text in `playstore/STORE_LISTING.md` (must be
+  pasted into Play Console — the app upload does not change the listing).
+
+### 🐛 Fixed (from PR #1)
+- Blank white screen on start on devices where FCM registration hangs —
+  startup push steps are now capped at 5 s.
+
+### 🔧 Changed
+- `share_plus` 10 → 13 (new `SharePlus.instance.share` API in Share room).
+
+## [1.13.2] - September 27, 2026 (Play versionCode 6, closed test)
+
+### 🐛 Fixed
+- **Still no room notifications for readers.** v1.13.1 only turned the bell on
+  when you posted/created, so people who mostly read (and fresh installs, which
+  reset bell prefs) were never subscribed. Now the bell is ON by default for
+  every room you're part of: opening a room turns it on, and on login/startup
+  `RoomNotifyService.autoEnableMyRooms` subscribes all your Visited + My Rooms.
+  An explicit "off" is still respected.
+- **Visited tab said "No messages yet" on busy rooms** (e.g. Migration, 106
+  messages). Visited entries are saved snapshots in `users/{uid}/joinedRooms`
+  that never stored `messageCount`, so the card always read 0. The card now
+  streams the room's live count on the Visited tab (`room_card.dart`). The data
+  itself was always correct.
+- **Google sign-in failed on APK installs** (`UNREGISTERED_ON_API_CONSOLE`,
+  app silently stayed on the login page): the upload key's SHA-1/SHA-256 was not
+  registered in Firebase. Registered 2026-09-27 — config only, no rebuild.
+
+## [1.13.1] - September 27, 2026 (Play versionCode 5, closed test)
+
+App-only release — no Cloud Function or rules deploy needed (server verified
+healthy: `notifyRoomOnNewMessage` runs on every message with no errors).
+
+### 🐛 Fixed
+- **Room notifications reached almost nobody.** The per-room 🔔 bell defaulted
+  to OFF and nothing turned it on, so no device was subscribed to room topics.
+  The bell now switches ON automatically when you create a room or post in it
+  (`RoomNotifyService.autoEnable`) — unless you already set it yourself, so an
+  explicit "off" is respected.
+- **Topic of the Day notification never showed.** The 9 AM alarms were being
+  scheduled, but `AndroidManifest.xml` was missing flutter_local_notifications'
+  `ScheduledNotificationReceiver` (so nothing displayed them when they fired)
+  and the boot receiver + `RECEIVE_BOOT_COMPLETED` (so a reboot wiped them).
+  Both added.
+
+## [1.13.0] - July 18, 2026
+
+> ⚠️ **Shipping this release needs three steps:** rebuild the app, **redeploy the
+> Cloud Functions** (`firebase deploy --only functions` — adds `deleteMyRoom` and
+> the `senderId` on room pushes), and **publish `firestore.rules`**
+> (`firebase deploy --only firestore:rules` — allows a message author to edit
+> their own text). Do the deploy/publish on Windows.
+
+### 🐛 Fixed
+- **Private rooms are joinable again.** Two bugs: the creator was wrongly asked
+  for the password to their own room, and the password prompt used a stale local
+  check against a hash that is always empty now (it lives server-side), so the
+  correct password was always rejected. The creator (and anyone already in) now
+  skips the prompt, and outsiders are verified via the `verifyRoomPassword`
+  Cloud Function.
+- **No more notification for your own message.** You're subscribed to your
+  room's topic, so FCM was delivering your own sends back to you. Each push now
+  carries the sender's id and your device drops pushes from itself.
+- **Notifications stop after logout.** Logging out now clears every push
+  subscription on the device (room bells, trending, broadcasts) by dropping the
+  FCM token; logging back in re-subscribes what's needed.
+- **Swipe-to-reply opens the keyboard again** so you can start typing the reply
+  immediately.
+
+### ✨ Added
+- **Leave a room.** A ⋮ menu in the chat's top bar → **Leave room** turns off
+  that room's notifications, removes it from your Visited list, and returns you
+  to the list. The room is untouched for everyone else; you can rejoin anytime.
+- **Delete your own room.** Long-press a room in **My Rooms** → **Delete room**
+  (creator only). Backed by the secret-free callable `deleteMyRoom` Cloud
+  Function, which confirms you're the creator, then recursively deletes the room
+  and all its messages/votes. Cannot be undone.
+- **Edit a message.** Long-press your own message → **Edit message**. Edited
+  messages show a small "edited" note. (Firestore rules now let an author change
+  only their own message's `text`; everyone else is still limited to reactions.)
+- **Change your display name.** The Profile screen has an ✏️ next to your name to
+  rename yourself (messages already sent keep the old name).
+- **Profanity warning on room creation.** Creating a room now runs the same
+  abusive-language check used for messages against the room **name and topic**,
+  warning (but not blocking) before it's created.
+- **Unread badge on rooms.** The Visited list now shows a red count on each room
+  for how many messages arrived since you last opened it (clears when you open
+  or leave the room).
+- **Manage blocked users.** Account menu → **Blocked users** lists everyone
+  you've blocked (by name) with an **Unblock** button. (Blocks are still
+  device-local and hide the person across every room.)
+- **Share a room.** The chat ⋮ menu now has **Share room**, which opens the
+  phone's share sheet with an invite (room name, topic, and the join code to
+  paste into Discover → Join by Code). Private rooms note that the password is
+  needed too.
 ## [1.13.0] - September 30, 2026
 
 Everything in this release comes from the Testers Community feedback report.

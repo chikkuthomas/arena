@@ -45,6 +45,7 @@ class _RoomsListScreenState extends State<RoomsListScreen>
   String? _category; // null = all categories
   bool _openingDaily = false;
   bool _showJoined = false; // false = rooms I created, true = rooms I joined
+  final _pages = PageController(); // page 0 = My Rooms, page 1 = Visited
   bool _hideVerifyBanner = false;
 
   Set<String> _hidden = {}; // rooms the user removed from their own list
@@ -245,6 +246,7 @@ class _RoomsListScreenState extends State<RoomsListScreen>
     WidgetsBinding.instance.removeObserver(this);
     _hiddenSub?.cancel();
     _searchController.dispose();
+    _pages.dispose();
     super.dispose();
   }
 
@@ -289,10 +291,10 @@ class _RoomsListScreenState extends State<RoomsListScreen>
     }
   }
 
-  bool _matchesFilters(Room room) {
+  bool _matchesFilters(Room room, {required bool joined}) {
     if (room.isDaily) return false; // shown in the featured card instead
     // In "My Rooms", hide rooms the user removed from their own list.
-    if (!_showJoined && _hidden.contains(room.id)) return false;
+    if (!joined && _hidden.contains(room.id)) return false;
     if (_category != null && room.category != _category) return false;
     if (_query.isEmpty) return true;
     final q = _query.toLowerCase();
@@ -403,58 +405,19 @@ class _RoomsListScreenState extends State<RoomsListScreen>
           ),
           _RoomsToggle(
             showJoined: _showJoined,
-            onChanged: (v) => setState(() => _showJoined = v),
+            onChanged: (v) {
+              setState(() => _showJoined = v);
+              _pages.animateToPage(v ? 1 : 0,
+                  duration: const Duration(milliseconds: 250),
+                  curve: Curves.easeOut);
+            },
           ),
           Expanded(
-            child: StreamBuilder<List<Room>>(
-              stream: _showJoined
-                  ? _rooms.watchJoinedRooms(_auth.currentUser!.uid)
-                  : _rooms.watchMyRooms(_auth.currentUser!.uid),
-              builder: (context, snapshot) {
-                if (snapshot.hasError) {
-                  return const _Centered(
-                    emoji: '⚠️',
-                    title: 'Could not load rooms',
-                    subtitle: 'Check your internet connection and try again.',
-                  );
-                }
-                if (!snapshot.hasData) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                final list =
-                    snapshot.data!.where(_matchesFilters).toList();
-                if (list.isEmpty) {
-                  final filtering = _query.isNotEmpty || _category != null;
-                  return _Centered(
-                    emoji: filtering
-                        ? '🔍'
-                        : (_showJoined ? '👥' : '🗣️'),
-                    title: filtering
-                        ? 'No rooms match'
-                        : (_showJoined
-                            ? 'No visited rooms yet'
-                            : 'No rooms created yet'),
-                    subtitle: filtering
-                        ? 'Try a different search or category.'
-                        : (_showJoined
-                            ? 'Rooms you open will show up here, so you can '
-                                'jump back in any time.'
-                            : 'Create a new debate room or discover rooms from others!'),
-                  );
-                }
-                return ListView.builder(
-                  padding: const EdgeInsets.only(top: 4, bottom: 90),
-                  itemCount: list.length,
-                  itemBuilder: (context, i) {
-                    final room = list[i];
-                    return RoomCard(
-                      room: room,
-                      onTap: () => _openRoom(room),
-                      onLongPress: () => _roomCardMenu(room),
-                    );
-                  },
-                );
-              },
+            // Swipe left/right to switch between My Rooms and Visited.
+            child: PageView(
+              controller: _pages,
+              onPageChanged: (i) => setState(() => _showJoined = i == 1),
+              children: [_roomsPage(false), _roomsPage(true)],
             ),
           ),
         ],
@@ -462,18 +425,81 @@ class _RoomsListScreenState extends State<RoomsListScreen>
     );
   }
 
+  /// One page of the swipeable rooms list: rooms I created ([joined] false) or
+  /// rooms I've visited ([joined] true).
+  Widget _roomsPage(bool joined) {
+    return StreamBuilder<List<Room>>(
+      stream: joined
+          ? _rooms.watchJoinedRooms(_auth.currentUser!.uid)
+          : _rooms.watchMyRooms(_auth.currentUser!.uid),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return const _Centered(
+            emoji: '⚠️',
+            title: 'Could not load rooms',
+            subtitle: 'Check your internet connection and try again.',
+          );
+        }
+        if (!snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final list =
+            snapshot.data!
+                .where((r) => _matchesFilters(r, joined: joined))
+                .toList();
+        if (list.isEmpty) {
+          final filtering = _query.isNotEmpty || _category != null;
+          return _Centered(
+            emoji: filtering
+                ? '🔍'
+                : (joined ? '👥' : '🗣️'),
+            title: filtering
+                ? 'No rooms match'
+                : (joined
+                    ? 'No visited rooms yet'
+                    : 'No rooms created yet'),
+            subtitle: filtering
+                ? 'Try a different search or category.'
+                : (joined
+                    ? 'Rooms you open will show up here, so you can '
+                        'jump back in any time.'
+                    : 'Create a new debate room or discover rooms from others!'),
+          );
+        }
+        return ListView.builder(
+          padding: const EdgeInsets.only(top: 4, bottom: 90),
+          itemCount: list.length,
+          itemBuilder: (context, i) {
+            final room = list[i];
+            return RoomCard(
+              room: room,
+              // On the Visited tab, badge how many messages arrived
+              // since this user last opened the room.
+              unreadBaseline: joined ? room.lastSeenCount : null,
+              onTap: () => _openRoom(room),
+              onLongPress: () => _roomCardMenu(room),
+            );
+          },
+        );
+      },
+    );
+  }
+
   Future<void> _openRoom(Room room) async {
-    if (room.isPrivate) {
-      final ok = await _askPassword(room);
-      if (ok != true) return;
-    }
-    if (!mounted) return;
     final uid = _auth.currentUser!.uid;
     // Use the side they picked last time; only ask the first time.
     Stance? stance;
     try {
       stance = await _rooms.getStoredStance(uid, room.id);
     } catch (_) {/* treat as not-yet-chosen */}
+    // Only an OUTSIDER opening a private room for the first time needs the
+    // password. The creator and anyone who has already joined go straight in.
+    if (room.isPrivate && room.createdBy != uid && stance == null) {
+      if (!mounted) return;
+      final ok = await _askPassword(room);
+      if (ok != true) return;
+    }
+    if (!mounted) return;
     if (stance == null) {
       if (!mounted) return;
       stance = await pickJoinStance(context, topic: room.topic);
@@ -520,6 +546,16 @@ class _RoomsListScreenState extends State<RoomsListScreen>
                   "This won't delete the room — others can still chat in it."),
               onTap: () => Navigator.pop(ctx, 'remove'),
             ),
+            // The creator can delete the whole room (for everyone).
+            if (room.createdBy == uid)
+              ListTile(
+                leading:
+                    const Icon(Icons.delete_forever, color: AppColors.primary),
+                title: const Text('Delete room'),
+                subtitle:
+                    const Text('Deletes it for everyone. This cannot be undone.'),
+                onTap: () => Navigator.pop(ctx, 'delete'),
+              ),
             ListTile(
               leading: const Icon(Icons.close),
               title: const Text('Cancel'),
@@ -529,6 +565,10 @@ class _RoomsListScreenState extends State<RoomsListScreen>
         ),
       ),
     );
+    if (choice == 'delete') {
+      await _confirmDeleteRoom(room);
+      return;
+    }
     if (choice != 'remove') return;
     try {
       if (isVisited) {
@@ -564,9 +604,49 @@ class _RoomsListScreenState extends State<RoomsListScreen>
     }
   }
 
+  /// Confirms and permanently deletes a room the current user created.
+  Future<void> _confirmDeleteRoom(Room room) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete room?'),
+        content: Text(
+            'This permanently deletes "${room.name}" and all its messages for '
+            'everyone. This cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    try {
+      await _rooms.deleteMyRoom(room.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Deleted "${room.name}"')),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not delete the room.')),
+        );
+      }
+    }
+  }
+
   Future<bool?> _askPassword(Room room) {
     final controller = TextEditingController();
     String? error;
+    bool submitting = false;
     return showDialog<bool>(
       context: context,
       builder: (context) {
@@ -600,14 +680,39 @@ class _RoomsListScreenState extends State<RoomsListScreen>
                   style: ElevatedButton.styleFrom(
                     minimumSize: const Size(88, 44),
                   ),
-                  onPressed: () {
-                    if (_rooms.checkPassword(room, controller.text)) {
-                      Navigator.pop(context, true);
-                    } else {
-                      setLocal(() => error = 'Wrong password');
-                    }
-                  },
-                  child: const Text('Join'),
+                  // The password is verified on the server (verifyRoomPassword) —
+                  // the hash is never on the client, so the old local check always
+                  // failed for rooms created after the server-side move.
+                  onPressed: submitting
+                      ? null
+                      : () async {
+                          setLocal(() {
+                            submitting = true;
+                            error = null;
+                          });
+                          bool ok = false;
+                          try {
+                            ok = await _rooms.verifyRoomPassword(
+                                room.id, controller.text);
+                          } catch (_) {
+                            ok = false;
+                          }
+                          if (ok) {
+                            if (context.mounted) Navigator.pop(context, true);
+                          } else {
+                            setLocal(() {
+                              submitting = false;
+                              error = 'Wrong password';
+                            });
+                          }
+                        },
+                  child: submitting
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Join'),
                 ),
               ],
             );

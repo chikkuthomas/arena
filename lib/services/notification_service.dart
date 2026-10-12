@@ -150,6 +150,14 @@ class NotificationService {
   /// foreground. (When the app is in the background or closed, the system shows
   /// the push automatically.) [roomId] is the room to open if the user taps it.
   /// Best-effort — never throws.
+  /// Removes a notification Android showed for a push (FCM posts it with the
+  /// server-set tag and id 0). Used to drop your own messages' notifications.
+  static Future<void> cancelPushed(String tag) async {
+    try {
+      await _plugin.cancel(id: 0, tag: tag);
+    } catch (_) {/* best-effort */}
+  }
+
   static Future<void> showRoomMessage(String title, String body,
           {String? roomId}) =>
       _showForeground('room_messages', 'Room messages',

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/room.dart';
+import '../services/room_service.dart';
 import '../theme.dart';
 
 /// A single tappable room in the rooms list, showing the topic, category and a
@@ -10,11 +11,16 @@ class RoomCard extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
 
+  /// The message count this user had already seen. When set (the Visited list),
+  /// the card shows a badge with how many messages arrived since. Null = no badge.
+  final int? unreadBaseline;
+
   const RoomCard({
     super.key,
     required this.room,
     required this.onTap,
     this.onLongPress,
+    this.unreadBaseline,
   });
 
   @override
@@ -51,6 +57,8 @@ class RoomCard extends StatelessWidget {
                       ),
                     ),
                   ),
+                  if (unreadBaseline != null)
+                    _UnreadBadge(roomId: room.id, seenCount: unreadBaseline!),
                   if (room.isDaily)
                     const _Tag(text: 'TOPIC OF THE DAY', color: AppColors.accent),
                   if (room.isPrivate)
@@ -108,7 +116,15 @@ class RoomCard extends StatelessWidget {
                 children: [
                   _Tag(text: room.category, color: AppColors.secondary),
                   const SizedBox(width: 8),
-                  _MessageCount(count: room.messageCount),
+                  // Visited entries are saved snapshots without a message
+                  // count, so read the room's live count there.
+                  unreadBaseline != null
+                      ? StreamBuilder<int>(
+                          stream: RoomService().watchMessageCount(room.id),
+                          builder: (context, snapshot) => _MessageCount(
+                              count: snapshot.data ?? room.messageCount),
+                        )
+                      : _MessageCount(count: room.messageCount),
                   const Spacer(),
                   Flexible(
                     child: Text(
@@ -154,6 +170,45 @@ class _MessageCount extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// A red pill showing how many new messages arrived since the user last opened
+/// the room. Streams the room's live message count and subtracts what was seen.
+/// Shows nothing when there's nothing new.
+class _UnreadBadge extends StatelessWidget {
+  final String roomId;
+  final int seenCount;
+  const _UnreadBadge({required this.roomId, required this.seenCount});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<int>(
+      stream: RoomService().watchMessageCount(roomId),
+      builder: (context, snapshot) {
+        final total = snapshot.data ?? seenCount;
+        final unread = total - seenCount;
+        if (unread <= 0) return const SizedBox.shrink();
+        return Container(
+          margin: const EdgeInsets.only(left: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            color: AppColors.primary,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          constraints: const BoxConstraints(minWidth: 24),
+          child: Text(
+            unread > 99 ? '99+' : '$unread',
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        );
+      },
     );
   }
 }

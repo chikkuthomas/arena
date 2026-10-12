@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../data/profanity.dart';
 import '../models/message.dart';
@@ -33,6 +35,7 @@ class ChatRoomScreen extends StatefulWidget {
 
 class _ChatRoomScreenState extends State<ChatRoomScreen> {
   final _input = TextEditingController();
+  final _inputFocus = FocusNode();
   final _scroll = ScrollController();
   final _rooms = RoomService();
   final _auth = AuthService();
@@ -57,6 +60,24 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     RoomNotifyService.subscribeParticipant(widget.room.id);
     _loadBlocked();
     _loadNotify();
+    _autoNotify();
+    _markRead();
+  }
+
+  /// Opening a room means you're in the debate → notify by default, unless the
+  /// user already chose a bell setting for this room.
+  Future<void> _autoNotify() async {
+    if (await RoomNotifyService.autoEnable(widget.room.id) && mounted) {
+      setState(() => _notifyOn = true);
+    }
+  }
+
+  /// Clears the unread badge for this room by recording the current message
+  /// count as "seen". Runs on open and again on leave (to catch messages that
+  /// arrived while it was on screen).
+  void _markRead() {
+    final uid = _auth.currentUser?.uid;
+    if (uid != null) _rooms.markRoomRead(uid, widget.room.id);
   }
 
   Future<void> _loadNotify() async {
@@ -114,12 +135,83 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     }
   }
 
+  /// Leaves the room: stops all notifications for it, drops it from the user's
+  /// Visited history, and returns to the room list. The room itself is untouched
+  /// (others keep chatting) — this only affects this user.
+  Future<void> _leaveRoom() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Leave room?'),
+        content: Text(
+            'You\'ll stop getting notifications from "${widget.room.name}" and '
+            'it\'ll be removed from your list. You can always rejoin later.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: AppColors.primary),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Leave'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    final roomId = widget.room.id;
+    final uid = _auth.currentUser?.uid;
+    // Stop every push for this room and forget it.
+    try {
+      await RoomNotifyService.setOn(roomId, false);
+    } catch (_) {/* best-effort */}
+    await RoomNotifyService.unsubscribeParticipant(roomId);
+    if (uid != null) {
+      try {
+        await _rooms.removeVisited(uid, roomId);
+      } catch (_) {/* non-fatal */}
+    }
+    if (!mounted) return;
+    // Grab the messenger before popping so the snackbar survives leaving the
+    // screen (it shows on the room list we return to).
+    final messenger = ScaffoldMessenger.of(context);
+    Navigator.of(context).pop();
+    messenger.showSnackBar(
+      SnackBar(content: Text('You left "${widget.room.name}"')),
+    );
+  }
+
+  /// Opens the phone's share sheet with an invite to this room. Recipients open
+  /// Arena → Discover → Join by Code and paste the code.
+  Future<void> _shareRoom() async {
+    final r = widget.room;
+    final buffer = StringBuffer()
+      ..writeln('Join my debate on Arena 🔥')
+      ..writeln()
+      ..writeln('"${r.name}" — ${r.topic}')
+      ..writeln()
+      ..writeln('In the Arena app: tap Discover → Join by Code → paste:')
+      ..writeln(r.id);
+    if (r.isPrivate) {
+      buffer
+        ..writeln()
+        ..writeln("(It's a private room — you'll also need the password from me.)");
+    }
+    await SharePlus.instance.share(
+        ShareParams(text: buffer.toString(), subject: 'Join "${r.name}" on Arena'));
+  }
+
   @override
   void dispose() {
     if (RoomNotifyService.activeRoomId == widget.room.id) {
       RoomNotifyService.activeRoomId = null;
     }
+    // Catch any messages that arrived while the room was open, so leaving marks
+    // them read too.
+    _markRead();
     _input.dispose();
+    _inputFocus.dispose();
     _scroll.dispose();
     super.dispose();
   }
@@ -173,6 +265,11 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       );
       _input.clear();
       if (mounted) setState(() => _replyingTo = null);
+      // Taking part in a debate → get notified of replies to it (unless the
+      // user already chose a bell setting for this room).
+      if (await RoomNotifyService.autoEnable(widget.room.id) && mounted) {
+        setState(() => _notifyOn = true);
+      }
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -215,9 +312,12 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       return;
     }
     setState(() => _replyingTo = m);
+    // Pop the keyboard open so the user can start typing their reply right away.
+    _inputFocus.requestFocus();
   }
 
-  /// Long-press menu on a message: delete your own, or report/block others.
+  /// Long-press menu on a message: reply, copy, edit/delete your own, or
+  /// report/block others.
   void _showMessageActions(Message m) {
     final isMine = m.senderId == _auth.currentUser?.uid;
     // Drop focus from the input so dismissing this menu doesn't pop the keyboard
@@ -238,7 +338,25 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                   _startReply(m);
                 },
               ),
-              if (isMine)
+              ListTile(
+                leading: const Icon(Icons.copy, color: AppColors.secondary),
+                title: const Text('Copy text'),
+                onTap: () async {
+                  Navigator.pop(sheetContext);
+                  await Clipboard.setData(ClipboardData(text: m.text));
+                  _toast('Message copied.');
+                },
+              ),
+              if (isMine) ...[
+                ListTile(
+                  leading: const Icon(Icons.edit_outlined,
+                      color: AppColors.secondary),
+                  title: const Text('Edit message'),
+                  onTap: () async {
+                    Navigator.pop(sheetContext);
+                    await _editMessage(m);
+                  },
+                ),
                 ListTile(
                   leading: const Icon(Icons.delete_outline,
                       color: AppColors.primary),
@@ -247,8 +365,8 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                     Navigator.pop(sheetContext);
                     await _deleteMessage(m);
                   },
-                )
-              else ...[
+                ),
+              ] else ...[
                 ListTile(
                   leading: const Icon(Icons.flag_outlined),
                   title: const Text('Report message'),
@@ -285,6 +403,50 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       await _rooms.deleteMessage(widget.room.id, m.id);
     } catch (_) {
       _toast('Could not delete the message.');
+    }
+  }
+
+  /// Lets the author fix a typo in one of their own messages.
+  Future<void> _editMessage(Message m) async {
+    final controller = TextEditingController(text: m.text);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Edit message'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            minLines: 1,
+            maxLines: 5,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: const InputDecoration(hintText: 'Your message'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () =>
+                  Navigator.pop(dialogContext, controller.text.trim()),
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+    if (result == null) return;
+    if (result.isEmpty || result == m.text) return;
+    // Same warning as sending, so an edit can't sneak vulgar words in.
+    if (hasProfanity(result)) {
+      final proceed = await _confirmProfanity();
+      if (proceed != true || !mounted) return;
+    }
+    try {
+      await _rooms.editMessage(widget.room.id, m.id, result);
+    } catch (_) {
+      _toast('Could not edit the message.');
     }
   }
 
@@ -361,6 +523,31 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
               style: const TextStyle(
                   color: Colors.white, fontWeight: FontWeight.w600),
             ),
+          ),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert, color: Colors.white),
+            onSelected: (value) {
+              if (value == 'share') _shareRoom();
+              if (value == 'leave') _leaveRoom();
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(
+                value: 'share',
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(Icons.share, color: AppColors.secondary),
+                  title: Text('Share room'),
+                ),
+              ),
+              PopupMenuItem(
+                value: 'leave',
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(Icons.logout, color: AppColors.primary),
+                  title: Text('Leave room'),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -466,6 +653,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
               ),
             _InputBar(
               controller: _input,
+              focusNode: _inputFocus,
               stance: _stance,
               sending: _sending,
               onSend: _send,
@@ -601,12 +789,14 @@ class _WatchingBar extends StatelessWidget {
 
 class _InputBar extends StatelessWidget {
   final TextEditingController controller;
+  final FocusNode focusNode;
   final Stance stance;
   final bool sending;
   final VoidCallback onSend;
 
   const _InputBar({
     required this.controller,
+    required this.focusNode,
     required this.stance,
     required this.sending,
     required this.onSend,
@@ -642,6 +832,7 @@ class _InputBar extends StatelessWidget {
                 Expanded(
                   child: TextField(
                     controller: controller,
+                    focusNode: focusNode,
                     minLines: 1,
                     maxLines: 4,
                     textCapitalization: TextCapitalization.sentences,
