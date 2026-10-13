@@ -8,6 +8,7 @@
 // Deploy with:  firebase deploy --only functions
 // (Requires the Firebase project to be on the Blaze plan.)
 
+const { setGlobalOptions } = require("firebase-functions/v2");
 const { onDocumentCreated } = require("firebase-functions/v2/firestore");
 const { onRequest, onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
@@ -19,6 +20,15 @@ const { getAuth } = require("firebase-admin/auth");
 const crypto = require("crypto");
 
 initializeApp();
+
+// Hard ceiling on how many copies of any function can run at once.
+//
+// Cloud Functions bills per invocation and scales to 1000 instances by default.
+// A trigger loop or a burst of abuse would otherwise run up a bill with nothing
+// to stop it, and Blaze has no spending cap — only after-the-fact alerts. With
+// a cap, the worst case is that Arena gets SLOW under load, not expensive.
+// Raise this if real traffic ever justifies it.
+setGlobalOptions({ maxInstances: 10 });
 
 // Must match RoomNotifyService.topicFor() in the Flutter app.
 function topicFor(roomId) {
@@ -654,7 +664,14 @@ async function purgeUser(uid, roomsSnap, { anonymise = false } = {}) {
 // guarded by BROADCAST_SECRET): identity comes from the caller's auth token,
 // so the app never needs to hold a shared secret. A user can only ever delete
 // themselves — the uid is taken from the token, never from the request body.
-exports.deleteMyAccount = onCall({ region: "asia-south1" }, async (req) => {
+// timeoutSeconds: purgeUser walks EVERY room (one query per room), so the work
+// grows with the size of the database, not with how much the user posted. At
+// the 60s default a big enough /rooms collection would time out midway — and
+// because the login is deleted last, that leaves data half-erased with the
+// account still usable. 300s buys a lot of headroom; if this ever gets close,
+// the fix is a targeted index, not a bigger number.
+exports.deleteMyAccount = onCall(
+    { region: "asia-south1", timeoutSeconds: 300 }, async (req) => {
   if (!req.auth) {
     throw new HttpsError("unauthenticated", "Sign in first.");
   }
@@ -686,8 +703,10 @@ exports.deleteMyAccount = onCall({ region: "asia-south1" }, async (req) => {
 //   POST https://asia-south1-arena-a049d.cloudfunctions.net/deleteUserAccount
 //   Header:  x-arena-key: <BROADCAST_SECRET>
 //   Body:    { "emails": ["a@x.com", "b@y.com"], "confirm": "DELETE USERS" }
+// timeoutSeconds: same full-/rooms walk as deleteMyAccount, once per email in
+// the batch, so this one needs the headroom even more.
 exports.deleteUserAccount = onRequest(
-  { region: "asia-south1", secrets: [broadcastSecret] },
+  { region: "asia-south1", secrets: [broadcastSecret], timeoutSeconds: 300 },
   async (req, res) => {
     if (req.method !== "POST") {
       return res.status(405).json({ error: "Use POST" });
