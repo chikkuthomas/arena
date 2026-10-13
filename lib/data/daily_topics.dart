@@ -487,7 +487,7 @@ const List<DailyTopic> kDailyTopics = [
       'History'),
   DailyTopic('Should we still celebrate explorers who took over other lands?',
       'History'),
-  DailyTopic('Has religion helped or held back human progress over time?',
+  DailyTopic('Does religion hold back human progress, or push it forward?',
       'History'),
   DailyTopic('Did just one man kill President Kennedy, or was it more?',
       'History'),
