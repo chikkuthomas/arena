@@ -553,36 +553,90 @@ exports.reportedMessages = onRequest(
 // self-service deleteMyAccount callable (uses the caller's own auth token).
 // Pass a one-off snapshot of /rooms so bulk admin deletes read it once.
 // Irreversible. Idempotent enough that a stale rooms entry is harmless.
-async function purgeUser(uid, roomsSnap) {
+// Stand-in identity left on content whose author has gone. DELETED_UID must
+// never be a real uid, so no live user inherits edit/delete rights over the
+// content (the Firestore rules key off senderId / createdBy).
+const DELETED_UID = "deleted";
+const DELETED_NAME = "Deleted user";
+
+async function purgeUser(uid, roomsSnap, { anonymise = false } = {}) {
   const db = getFirestore();
   const auth = getAuth();
   let messagesDeleted = 0;
   let roomsDeleted = 0;
+  let messagesAnonymised = 0;
+  let roomsAnonymised = 0;
 
-  // Reports they filed.
+  // Reports they filed. Always hard-deleted — these are private to the user
+  // and have no value to anyone else once the account is gone.
   const reps = await db
     .collection("reports")
     .where("reporterId", "==", uid)
     .get();
   for (const d of reps.docs) await d.ref.delete();
 
-  // Walk every room: delete rooms they created outright, otherwise strip
-  // their messages and their vote from that room.
+  // Walk every room.
+  //
+  // anonymise=false (admin/moderation): delete rooms they created outright and
+  // strip their messages — used when removing an abusive account's content.
+  //
+  // anonymise=true (self-service deletion): KEEP the rooms and the messages and
+  // just blank the author identity. Deleting a room would take every other
+  // participant's messages with it — and the "Topic of the Day" room is owned
+  // by whichever user happened to open the app first that day
+  // (DailyTopicService.ensureTodayRoom), so a single person leaving would
+  // otherwise wipe a shared debate that looks like it belongs to Arena.
   for (const roomDoc of roomsSnap.docs) {
     const roomRef = roomDoc.ref;
-    if ((roomDoc.data() || {}).createdBy === uid) {
+    const theirRoom = (roomDoc.data() || {}).createdBy === uid;
+
+    if (theirRoom && !anonymise) {
       await db.recursiveDelete(roomRef);
       roomsDeleted++;
       continue;
     }
+    if (theirRoom) {
+      await roomRef.update({
+        createdBy: DELETED_UID,
+        createdByName: DELETED_NAME,
+      });
+      roomsAnonymised++;
+    }
+
     const msgs = await roomRef
       .collection("messages")
       .where("senderId", "==", uid)
       .get();
     for (const m of msgs.docs) {
-      await m.ref.delete();
-      messagesDeleted++;
+      if (anonymise) {
+        await m.ref.update({
+          senderId: DELETED_UID,
+          senderName: DELETED_NAME,
+          senderAvatar: FieldValue.delete(),
+        });
+        messagesAnonymised++;
+      } else {
+        await m.ref.delete();
+        messagesDeleted++;
+      }
     }
+
+    // Messages by OTHER people that quote one of theirs carry a denormalized
+    // copy of their name and uid (see Message.replyToSender/replyToSenderId).
+    // Blank those too, or the name survives in every reply quote.
+    if (anonymise) {
+      const quotes = await roomRef
+        .collection("messages")
+        .where("replyToSenderId", "==", uid)
+        .get();
+      for (const q of quotes.docs) {
+        await q.ref.update({
+          replyToSenderId: DELETED_UID,
+          replyToSender: DELETED_NAME,
+        });
+      }
+    }
+
     await roomRef.collection("votes").doc(uid).delete();
   }
 
@@ -591,7 +645,7 @@ async function purgeUser(uid, roomsSnap) {
   // Finally the login account itself.
   await auth.deleteUser(uid);
 
-  return { messagesDeleted, roomsDeleted };
+  return { messagesDeleted, roomsDeleted, messagesAnonymised, roomsAnonymised };
 }
 
 // ---- Let a signed-in user delete their OWN account ----------------------
@@ -613,7 +667,9 @@ exports.deleteMyAccount = onCall({ region: "asia-south1" }, async (req) => {
   const db = getFirestore();
   const roomsSnap = await db.collection("rooms").get();
   try {
-    const stats = await purgeUser(uid, roomsSnap);
+    // anonymise: the user's own data goes, but rooms and debate threads they
+    // took part in survive with the author blanked. See purgeUser.
+    const stats = await purgeUser(uid, roomsSnap, { anonymise: true });
     return { ok: true, ...stats };
   } catch (e) {
     console.error("deleteMyAccount failed for", uid, e);
