@@ -18,9 +18,17 @@ class DailyTopicService {
   }
 
   /// The topic for a given day, chosen deterministically from the date.
+  ///
+  /// Uses DateTime.utc so the day number depends ONLY on the calendar date,
+  /// never on the device's timezone. With local DateTime, midnight converts to
+  /// a different UTC instant per zone — in IST (+5:30) local midnight on the
+  /// 14th is 18:30 UTC on the 13th — so two devices in different zones derived
+  /// DIFFERENT topics for the same calendar day, and (because roomIdFor keys
+  /// off the local date) could each create their own room for the same debate:
+  /// two "Topic of the Day" rooms with identical text, one of them dead.
   DailyTopic topicFor(DateTime date) {
     final dayNumber =
-        DateTime(date.year, date.month, date.day).millisecondsSinceEpoch ~/
+        DateTime.utc(date.year, date.month, date.day).millisecondsSinceEpoch ~/
             Duration.millisecondsPerDay;
     final index = dayNumber % kDailyTopics.length;
     return kDailyTopics[index];

@@ -1,3 +1,4 @@
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 
 import '../services/auth_service.dart';
@@ -37,7 +38,9 @@ class SettingsScreen extends StatelessWidget {
     // routes (Settings, rooms list) so the user lands on it.
     navigator.popUntil((r) => r.isFirst);
     messenger.showSnackBar(
-      const SnackBar(content: Text('Your account and data have been deleted.')),
+      const SnackBar(
+          content: Text('Your account has been deleted. Your posts now show '
+              'as "Deleted user".')),
     );
   }
 
@@ -142,7 +145,7 @@ class SettingsScreen extends StatelessWidget {
             icon: Icons.delete_forever_outlined,
             iconColour: AppColors.againstSide,
             title: 'Delete account',
-            subtitle: 'Permanently erase your account and all your data',
+            subtitle: 'Permanently erase your login, profile and votes',
             onTap: () => _deleteAccount(context),
           ),
           const SizedBox(height: 12),
@@ -186,12 +189,20 @@ class _DeleteAccountDialogState extends State<_DeleteAccountDialog> {
     try {
       await AuthService().deleteMyAccount();
       if (mounted) Navigator.of(context).pop(true);
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
+      // A suspended account is refused deletion server-side so its messages
+      // stay available as moderation evidence. Show that reason instead of
+      // blaming the connection, or the user retries forever.
+      var message = 'Could not delete your account. Check your connection and '
+          'try again.';
+      if (e is FirebaseFunctionsException && e.code == 'permission-denied') {
+        message = e.message ??
+            'This account is suspended and cannot be deleted.';
+      }
       setState(() {
         _busy = false;
-        _error = 'Could not delete your account. Check your connection and '
-            'try again.';
+        _error = message;
       });
     }
   }
@@ -200,6 +211,10 @@ class _DeleteAccountDialogState extends State<_DeleteAccountDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       backgroundColor: AppColors.card,
+      // Scrollable because the on-screen keyboard opens as soon as the confirm
+      // field is focused, roughly halving the available height. Without this
+      // the content overflows and the action buttons render on top of it.
+      scrollable: true,
       title: const Text('Delete account?'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
@@ -212,10 +227,15 @@ class _DeleteAccountDialogState extends State<_DeleteAccountDialog> {
           const SizedBox(height: 10),
           const Text(
             '•  your login and profile\n'
-            '•  every message you have posted\n'
-            '•  the rooms you created, and their messages\n'
-            '•  your votes and reports',
+            '•  your votes and the reports you filed',
             style: TextStyle(color: AppColors.textGrey, height: 1.5),
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'Your messages and any rooms you created stay up, so others keep '
+            'their side of the debate — but they show as "Deleted user" and '
+            'are no longer linked to you.',
+            style: TextStyle(color: AppColors.textGrey, height: 1.4),
           ),
           const SizedBox(height: 16),
           const Text(

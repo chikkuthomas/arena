@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -138,6 +139,20 @@ class RoomNotifyService {
     } catch (_) {
       // Offline / messaging unavailable — must not break the chat.
     }
+    // Lets the Cloud Function know who to write a notification-history doc
+    // for when the room starts trending — FCM topic subscriptions aren't
+    // queryable server-side. Best-effort — must not break the chat.
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid != null) {
+      try {
+        await FirebaseFirestore.instance
+            .collection('rooms')
+            .doc(roomId)
+            .collection('participants')
+            .doc(uid)
+            .set({'joinedAt': FieldValue.serverTimestamp()});
+      } catch (_) {/* best-effort */}
+    }
   }
 
   /// Unsubscribes this device from a room's "trending" re-engagement topic.
@@ -148,6 +163,17 @@ class RoomNotifyService {
           .unsubscribeFromTopic(participantsTopicFor(roomId));
     } catch (_) {
       // Best-effort.
+    }
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid != null) {
+      try {
+        await FirebaseFirestore.instance
+            .collection('rooms')
+            .doc(roomId)
+            .collection('participants')
+            .doc(uid)
+            .delete();
+      } catch (_) {/* best-effort */}
     }
   }
 
@@ -212,5 +238,25 @@ class RoomNotifyService {
     }
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_prefKey(roomId), on);
+
+    // Mirror the choice to Firestore so the Cloud Function knows who to write
+    // a notification-history doc for — FCM topic subscriber lists aren't
+    // queryable server-side. Best-effort; the FCM subscribe/unsubscribe above
+    // already happened, so a failure here only costs history, not the push.
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid != null) {
+      final ref = FirebaseFirestore.instance
+          .collection('rooms')
+          .doc(roomId)
+          .collection('notifySubscribers')
+          .doc(uid);
+      try {
+        if (on) {
+          await ref.set({'updatedAt': FieldValue.serverTimestamp()});
+        } else {
+          await ref.delete();
+        }
+      } catch (_) {/* best-effort */}
+    }
   }
 }

@@ -69,6 +69,36 @@ const TREND_LINES = [
   "💬 is buzzing right now. Share your side before it cools off!",
 ];
 
+// Writes a notification-history doc for one user. Best-effort — a history
+// write must never block or fail the push it's recording.
+async function recordNotification(uid, { type, title, body, roomId }) {
+  try {
+    await getFirestore().collection("users").doc(uid).collection("notifications").add({
+      type, title, body, roomId: roomId || null,
+      createdAt: FieldValue.serverTimestamp(),
+      read: false,
+    });
+  } catch (e) {
+    console.error("Failed to record notification for", uid, e);
+  }
+}
+
+// Fans a notification-history write out to every uid in a room subcollection
+// (notifySubscribers or participants), skipping `skipUid` (e.g. the sender).
+// Best-effort per-doc — one failed write must not stop the rest.
+async function recordToSubcollection(roomId, subcollection, skipUid, payload) {
+  try {
+    const snap = await getFirestore()
+      .collection("rooms").doc(roomId).collection(subcollection).get();
+    await Promise.all(snap.docs
+      .map((d) => d.id)
+      .filter((uid) => uid !== skipUid)
+      .map((uid) => recordNotification(uid, payload)));
+  } catch (e) {
+    console.error(`Failed to fan out ${subcollection} notifications for room`, roomId, e);
+  }
+}
+
 exports.notifyRoomOnNewMessage = onDocumentCreated(
   "rooms/{roomId}/messages/{messageId}",
   async (event) => {
@@ -120,6 +150,9 @@ exports.notifyRoomOnNewMessage = onDocumentCreated(
     } catch (e) {
       console.error("Failed to send room notification:", e);
     }
+    await recordToSubcollection(roomId, "notifySubscribers", msg.senderId, {
+      type: "room_message", title: roomName, body, roomId,
+    });
 
     // If this message is a reply, also notify the author of the quoted message
     // directly (via their personal user topic) — even if they don't follow the
@@ -142,6 +175,10 @@ exports.notifyRoomOnNewMessage = onDocumentCreated(
       } catch (e) {
         console.error("Failed to send reply notification:", e);
       }
+      await recordNotification(replyToSenderId, {
+        type: "reply", title: sender + " replied to you",
+        body: text.slice(0, 180), roomId,
+      });
     }
 
     // ---- Trending re-engagement -----------------------------------------
@@ -178,14 +215,18 @@ exports.notifyRoomOnNewMessage = onDocumentCreated(
 
       if (fire) {
         const line = TREND_LINES[Math.floor(Math.random() * TREND_LINES.length)];
+        const trendBody = '"' + roomName + '" ' + line;
         await getMessaging().send({
           topic: participantsTopicFor(roomId),
-          notification: { title: roomName, body: '"' + roomName + '" ' + line },
+          notification: { title: roomName, body: trendBody },
           data: { roomId: roomId, type: "trending" },
           android: {
             priority: "high",
             notification: { channelId: "trending" },
           },
+        });
+        await recordToSubcollection(roomId, "participants", msg.senderId, {
+          type: "trending", title: roomName, body: trendBody, roomId,
         });
       }
     } catch (e) {
@@ -264,6 +305,15 @@ exports.broadcastTopic = onRequest(
         priority: "high",
         notification: { channelId: "broadcast" },
       },
+    });
+
+    // One shared doc every signed-in client reads directly — no per-user
+    // fan-out needed since every account is already subscribed to this topic.
+    await db.collection("broadcasts").doc(roomId).set({
+      title: "🔥 New debate is live!",
+      body: topic.slice(0, 180),
+      roomId,
+      createdAt: FieldValue.serverTimestamp(),
     });
 
     return res.status(200).json({ ok: true, roomId, topic });
@@ -606,9 +656,15 @@ async function purgeUser(uid, roomsSnap, { anonymise = false } = {}) {
       continue;
     }
     if (theirRoom) {
+      // The daily room is "owned" by whoever opened the app first that day
+      // (DailyTopicService.ensureTodayRoom writes their uid as createdBy but
+      // always shows "Arena" as the author). Stamping it "Deleted user" would
+      // relabel a room that is supposed to look like it belongs to Arena, in
+      // front of every other user. Drop the uid link, keep the Arena byline.
+      const isDaily = (roomDoc.data() || {}).isDaily === true;
       await roomRef.update({
         createdBy: DELETED_UID,
-        createdByName: DELETED_NAME,
+        ...(isDaily ? {} : { createdByName: DELETED_NAME }),
       });
       roomsAnonymised++;
     }
@@ -648,6 +704,10 @@ async function purgeUser(uid, roomsSnap, { anonymise = false } = {}) {
     }
 
     await roomRef.collection("votes").doc(uid).delete();
+    // Drop them from this room's notification fan-out lists too — otherwise a
+    // future message keeps fanning a write out to a uid that no longer exists.
+    await roomRef.collection("notifySubscribers").doc(uid).delete();
+    await roomRef.collection("participants").doc(uid).delete();
   }
 
   // Their profile doc + subcollections (joinedRooms, hiddenRooms…).
@@ -682,6 +742,22 @@ exports.deleteMyAccount = onCall(
   }
   const uid = req.auth.uid;
   const db = getFirestore();
+
+  // A banned account may NOT erase itself. Banning disables the login and
+  // revokes refresh tokens, but a callable verifies the ID token without
+  // checking revocation — so a banned user whose app is already open holds a
+  // valid token for up to an hour. That was long enough to anonymise their own
+  // messages and destroy the link between the abuse and the account, which is
+  // exactly the evidence a ban exists to preserve. Reports filed ABOUT them
+  // survive regardless (they snapshot offenderId/offenderName/messageText),
+  // but the account itself has to stay for an appeal or a takedown request.
+  if ((await db.collection("banned").doc(uid).get()).exists) {
+    throw new HttpsError(
+        "permission-denied",
+        "This account is suspended and cannot be deleted. Contact " +
+        "cryptork97@gmail.com if you believe this is a mistake.");
+  }
+
   const roomsSnap = await db.collection("rooms").get();
   try {
     // anonymise: the user's own data goes, but rooms and debate threads they

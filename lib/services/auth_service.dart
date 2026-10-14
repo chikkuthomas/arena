@@ -201,8 +201,14 @@ class AuthService {
     await _auth.signOut();
   }
 
-  /// Permanently deletes this account and everything the person owns — their
-  /// messages, the rooms they created, their votes and their profile.
+  /// Permanently deletes this account: the login, the profile, the person's
+  /// votes and the reports they filed.
+  ///
+  /// Their messages and any rooms they created are KEPT and anonymised to
+  /// "Deleted user" instead — deleting a room would take every other
+  /// participant's messages with it, and the daily room is owned by whoever
+  /// opened the app first that day. See purgeUser(anonymise: true) in
+  /// functions/index.js; the dialog copy in settings_screen.dart must match.
   ///
   /// Google Play requires an in-app deletion path for any app with accounts.
   /// The erasing happens in the `deleteMyAccount` Cloud Function, which takes
