@@ -211,6 +211,10 @@ class _DeleteAccountDialogState extends State<_DeleteAccountDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       backgroundColor: AppColors.card,
+      // Scrollable because the on-screen keyboard opens as soon as the confirm
+      // field is focused, roughly halving the available height. Without this
+      // the content overflows and the action buttons render on top of it.
+      scrollable: true,
       title: const Text('Delete account?'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
@@ -228,10 +232,9 @@ class _DeleteAccountDialogState extends State<_DeleteAccountDialog> {
           ),
           const SizedBox(height: 12),
           const Text(
-            'Debates you took part in stay up, so the other people in them '
-            'keep their side of the argument. Your messages and any rooms you '
-            'created remain, but are no longer linked to you — they show as '
-            '"Deleted user".',
+            'Your messages and any rooms you created stay up, so others keep '
+            'their side of the debate — but they show as "Deleted user" and '
+            'are no longer linked to you.',
             style: TextStyle(color: AppColors.textGrey, height: 1.4),
           ),
           const SizedBox(height: 16),
