@@ -6,7 +6,7 @@ publish_to: 'none'
 # Version: <name>+<build number>. For Android, name -> versionName and the
 # build number -> versionCode. Bump the build number on every Play Store upload.
 # versionCode 10 is already taken by the closed test, so a new upload needs 11+.
-version: 1.0.3+12
+version: 1.0.4+13
 
 environment:
   sdk: ^3.12.2
