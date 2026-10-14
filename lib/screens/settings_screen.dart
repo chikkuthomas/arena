@@ -1,3 +1,4 @@
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 
 import '../services/auth_service.dart';
@@ -188,12 +189,20 @@ class _DeleteAccountDialogState extends State<_DeleteAccountDialog> {
     try {
       await AuthService().deleteMyAccount();
       if (mounted) Navigator.of(context).pop(true);
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
+      // A suspended account is refused deletion server-side so its messages
+      // stay available as moderation evidence. Show that reason instead of
+      // blaming the connection, or the user retries forever.
+      var message = 'Could not delete your account. Check your connection and '
+          'try again.';
+      if (e is FirebaseFunctionsException && e.code == 'permission-denied') {
+        message = e.message ??
+            'This account is suspended and cannot be deleted.';
+      }
       setState(() {
         _busy = false;
-        _error = 'Could not delete your account. Check your connection and '
-            'try again.';
+        _error = message;
       });
     }
   }

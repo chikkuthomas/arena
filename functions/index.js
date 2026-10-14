@@ -736,6 +736,22 @@ exports.deleteMyAccount = onCall(
   }
   const uid = req.auth.uid;
   const db = getFirestore();
+
+  // A banned account may NOT erase itself. Banning disables the login and
+  // revokes refresh tokens, but a callable verifies the ID token without
+  // checking revocation — so a banned user whose app is already open holds a
+  // valid token for up to an hour. That was long enough to anonymise their own
+  // messages and destroy the link between the abuse and the account, which is
+  // exactly the evidence a ban exists to preserve. Reports filed ABOUT them
+  // survive regardless (they snapshot offenderId/offenderName/messageText),
+  // but the account itself has to stay for an appeal or a takedown request.
+  if ((await db.collection("banned").doc(uid).get()).exists) {
+    throw new HttpsError(
+        "permission-denied",
+        "This account is suspended and cannot be deleted. Contact " +
+        "cryptork97@gmail.com if you believe this is a mistake.");
+  }
+
   const roomsSnap = await db.collection("rooms").get();
   try {
     // anonymise: the user's own data goes, but rooms and debate threads they
