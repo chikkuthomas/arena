@@ -151,6 +151,30 @@ service cloud.firestore {
         allow read: if signedIn();
         allow write: if signedIn() && notBanned() && request.auth.uid == voterId;
       }
+
+      // Who has the 🔔 bell on for this room (notifyRoomOnNewMessage reads this
+      // to know who to write a notification-history doc for). One doc per uid;
+      // you may only create/remove your own.
+      match /notifySubscribers/{uid} {
+        allow read: if signedIn();
+        allow write: if signedIn() && request.auth.uid == uid;
+      }
+
+      // Who has taken part in this room (opened it and not explicitly left) —
+      // the "trending" re-engagement push fans out to these uids. Same
+      // own-doc-only rule as notifySubscribers.
+      match /participants/{uid} {
+        allow read: if signedIn();
+        allow write: if signedIn() && request.auth.uid == uid;
+      }
+    }
+
+    // Admin broadcasts — one doc per broadcastTopic call, read by everyone so
+    // the notifications screen can list them. Only the Cloud Function (Admin
+    // SDK, bypasses rules) ever writes one.
+    match /broadcasts/{broadcastId} {
+      allow read: if signedIn();
+      allow write: if false;
     }
   }
 }
