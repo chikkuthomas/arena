@@ -37,7 +37,9 @@ class SettingsScreen extends StatelessWidget {
     // routes (Settings, rooms list) so the user lands on it.
     navigator.popUntil((r) => r.isFirst);
     messenger.showSnackBar(
-      const SnackBar(content: Text('Your account and data have been deleted.')),
+      const SnackBar(
+          content: Text('Your account has been deleted. Your posts now show '
+              'as "Deleted user".')),
     );
   }
 
@@ -142,7 +144,7 @@ class SettingsScreen extends StatelessWidget {
             icon: Icons.delete_forever_outlined,
             iconColour: AppColors.againstSide,
             title: 'Delete account',
-            subtitle: 'Permanently erase your account and all your data',
+            subtitle: 'Permanently erase your login, profile and votes',
             onTap: () => _deleteAccount(context),
           ),
           const SizedBox(height: 12),
@@ -212,10 +214,16 @@ class _DeleteAccountDialogState extends State<_DeleteAccountDialog> {
           const SizedBox(height: 10),
           const Text(
             '•  your login and profile\n'
-            '•  every message you have posted\n'
-            '•  the rooms you created, and their messages\n'
-            '•  your votes and reports',
+            '•  your votes and the reports you filed',
             style: TextStyle(color: AppColors.textGrey, height: 1.5),
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'Debates you took part in stay up, so the other people in them '
+            'keep their side of the argument. Your messages and any rooms you '
+            'created remain, but are no longer linked to you — they show as '
+            '"Deleted user".',
+            style: TextStyle(color: AppColors.textGrey, height: 1.4),
           ),
           const SizedBox(height: 16),
           const Text(
