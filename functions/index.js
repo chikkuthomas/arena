@@ -656,9 +656,15 @@ async function purgeUser(uid, roomsSnap, { anonymise = false } = {}) {
       continue;
     }
     if (theirRoom) {
+      // The daily room is "owned" by whoever opened the app first that day
+      // (DailyTopicService.ensureTodayRoom writes their uid as createdBy but
+      // always shows "Arena" as the author). Stamping it "Deleted user" would
+      // relabel a room that is supposed to look like it belongs to Arena, in
+      // front of every other user. Drop the uid link, keep the Arena byline.
+      const isDaily = (roomDoc.data() || {}).isDaily === true;
       await roomRef.update({
         createdBy: DELETED_UID,
-        createdByName: DELETED_NAME,
+        ...(isDaily ? {} : { createdByName: DELETED_NAME }),
       });
       roomsAnonymised++;
     }
